@@ -44,6 +44,15 @@ LatentGym spans 7 text-based environments (bandits, wordle, hangman, mastermind,
 ## Citation
 
 ```bibtex
+@misc{mittal2026latentgymtestbedcrosstaskexperiential,
+      title={LatentGym: A Testbed For Cross-Task Experiential Learning With Controllable Latent Structure}, 
+      author={Daksh Mittal and Tommaso Castellani and Thomson Yen and Naimeng Ye and Fangyu Wu and Minghui Chen and Tiffany Cai and Emmanouil Koukoumidis and William Zeng and Hongseok Namkoong},
+      year={2026},
+      eprint={2606.15306},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2606.15306}, 
+}
 ```
 
 ## Acknowledgements
