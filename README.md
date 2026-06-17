@@ -2,7 +2,7 @@
 
 # LatentGym: A Testbed For Cross-Task Experiential Learning With Controllable Latent Structure
 
-[![Paper](https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg)](https://arxiv.org/abs/XXXX.XXXXX)
+[![Paper](https://img.shields.io/badge/arXiv-2606.15306-b31b1b.svg)](https://arxiv.org/abs/2606.15306)
 [![Blog](https://img.shields.io/badge/Blog-Read%20More-1f6feb.svg)](https://example.com/blog)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Collection-ffcc4d.svg)](https://huggingface.co/collections/namkoong-lab/latentgym-6a22ddf5339b7ef0423934c6)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3127/)
