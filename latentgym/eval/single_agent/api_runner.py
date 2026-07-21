@@ -86,7 +86,13 @@ class APIRunner:
             if obs:
                 conversation.extend(obs)
 
-            # Track episode transitions
+            # Episode-boundary signal (see AGENTIC_MEMORY_PHASE0_NOTE.md):
+            # MultiEpisodeEnv.step advances metadata["episode"] to the *next*
+            # index when a non-final episode ends (and packs end-feedback +
+            # next initial obs into one user message). On the final episode,
+            # metadata["episode"] stays put and done=True. Memory hooks should
+            # extract facts for the completed episode here, then retrieve for
+            # the upcoming first decision — without reading episode_configs.
             new_episode = step_metadata.get("episode", 0)
             ep_rewards = step_metadata.get("episode_rewards", [])
             ep_turns = step_metadata.get("turns_per_episode", [])
