@@ -4,8 +4,9 @@
 
 **Status:** working design specification  
 **Initial environment:** `number_guessing`  
-**Primary objective:** implement and evaluate an explicit agentic memory lifecycle before training any RL policy  
-**Longer-term objective:** use the same evaluation framework for RL-managed memory and, later, latent or differentiable memory architectures
+**Primary objective:** first determine whether explicit factual memory improves cross-task performance, before introducing cognitive memory or RL  
+**Second objective:** add evidence-grounded cognitive memory with regression testing and decision-time applicability checks  
+**Longer-term objective:** use the same environment and evaluation framework for RL-managed memory and, later, latent or differentiable memory architectures
 
 ---
 
@@ -27,10 +28,11 @@ Before editing code:
    - `latentgym/eval/orchestrator.py`;
    - `latentgym/eval/model_interface.py`.
 6. Locate the exact code path that detects an episode boundary inside a multi-episode trajectory.
-7. Do **not** modify the original runner until the baseline evaluation has been reproduced.
-8. Implement the new method in isolated files and preserve existing APIs wherever possible.
-9. Do **not** begin RL training in the first implementation.
-10. Never expose hidden `ground_truth` or future episode configurations to the task agent, event extractor, hypothesis generator, or memory retriever. Hidden information may be used only by the evaluator.
+7. Determine how the standard runner retains earlier messages across episodes.
+8. Do **not** modify the original runner until the baseline evaluation has been reproduced.
+9. Implement memory functionality in isolated files and preserve existing APIs wherever possible.
+10. Do **not** begin cognitive-memory generation or RL before the factual-memory baselines run end to end.
+11. Never expose hidden `ground_truth`, latent values, or future episode configurations to the task agent, recorder, summarizer, retriever, or cognition generator. Hidden information may be used only by the evaluator.
 
 The repository documentation may still refer to an older working-directory name such as `meta-rl`. Use the actual cloned repository root as the working directory.
 
@@ -38,211 +40,341 @@ The repository documentation may still refer to an older working-directory name 
 
 ## 1. Research Motivation
 
-LatentGym currently evaluates whether an agent can learn across a sequence of tasks sharing a hidden latent structure. In the standard single-agent setup, the agent can benefit from the accumulated interaction context.
+LatentGym evaluates whether an agent can improve across a sequence of tasks sharing a hidden latent structure. In the standard single-agent setup, the agent can use the accumulated interaction context.
 
-This project replaces implicit full-history adaptation with an explicit, auditable memory lifecycle:
+This project asks whether a more explicit and auditable memory system can replace or improve on raw full-history context.
+
+The staged memory lifecycle is:
 
 ```text
 interaction trajectory
-    -> verified episodic facts
-    -> candidate cognitive memories
-    -> controlled regression validation
-    -> validated, revised, or rejected cognition
+    -> detailed factual record
+    -> compact factual memory linked to the detailed record
     -> decision-time retrieval
+    -> optional drill-down when the summary is ambiguous or contradictory
+    -> later: candidate cognitive memory grounded in facts
+    -> regression validation before broad adoption
+    -> decision-time applicability check using the supporting facts
 ```
 
 The central safety principle is:
 
 > Memory may be useless, but it should not be toxic.
 
-A false cognitive rule can systematically steer future decisions in the wrong direction. Therefore:
+The core distinction is:
 
-- factual records and inferred rules must be stored separately;
-- cognitive memories must carry an explicit scope and provenance;
-- candidate cognitions must be tested through controlled downstream rollouts;
-- every decision must record which memories were loaded and used;
-- incorrect cognitions must be locatable, reversible, and rebuildable from facts.
+- **detailed factual memory** preserves the original evidence;
+- **factual memory** is a compact, objective index over that evidence;
+- **cognitive memory** is a fallible rule, belief, or strategy inferred from facts.
+
+A cognitive rule is a shortcut, not a replacement for evidence. Even a cognition that passed regression tests must remain linked to the facts that justified it, so the agent can reconsider it when the current context differs or when memories conflict.
+
+### Two separate validation points
+
+The design deliberately keeps two forms of validation:
+
+1. **Formation-time regression validation**
+   - asks whether a candidate cognition tends to improve downstream decisions within a tested scope;
+   - prevents arbitrary LLM-generated experience from becoming a trusted rule.
+
+2. **Invocation-time applicability judgment**
+   - asks whether that cognition applies to the concrete decision currently being made;
+   - compares the current context with supporting facts and scope;
+   - drills down into detailed facts when summaries are ambiguous or evidence conflicts.
+
+These are complementary. Passing a regression suite does not make a cognition universally correct.
 
 ---
 
 ## 2. Main Research Questions
 
-### RQ1: Can compact episodic memory replace full interaction history?
+The experiments should be staged. Do not require the cognitive layer to answer the first questions.
+
+### Stage A: factual memory
+
+#### RQ1: Does compact factual memory improve over no cross-task memory?
 
 Compare:
 
 - no cross-task memory;
+- compact factual memories retrieved at a decision point.
+
+#### RQ2: Can compact factual memory replace raw full history?
+
+Compare under controlled or reported token budgets:
+
 - full interaction history;
-- compact verified episodic facts.
+- compact factual memories.
 
-### RQ2: Does cognitive consolidation add value beyond episodic facts?
+#### RQ3: Does hierarchical drill-down improve factual memory?
 
-Under identical episodic evidence, compare:
+Compare:
 
-- episodic facts only;
-- episodic facts plus one candidate cognition.
+- compact factual summaries only;
+- compact factual summaries with access to linked detailed records when the agent detects ambiguity, contradiction, or insufficient evidence.
 
-### RQ3: Can regression validation prevent toxic cognition?
+Measure whether drill-down improves robustness enough to justify its token and tool cost.
+
+### Stage B: cognitive memory
+
+#### RQ4: Does cognitive memory add value beyond its supporting facts?
+
+Under identical factual evidence, compare:
+
+- facts only;
+- cognition only;
+- facts plus cognition.
+
+This comparison directly tests the concern that skill-like systems may rely on distilled experience while discarding the evidence required to question it.
+
+#### RQ5: Does regression validation reduce toxic cognitive memory?
 
 Compare:
 
 - naive LLM-generated cognition accepted immediately;
-- evidence-gated cognition with provenance and scope;
-- regression-validated cognition.
+- evidence-gated cognition with scope and provenance;
+- regression-validated cognition;
+- regression-validated cognition plus invocation-time fact checking.
 
-### RQ4: What kinds of failure occur?
+#### RQ6: Which failures dominate?
 
 Separate at least:
 
-- event extraction failure;
+- detailed-recording failure;
+- factual summarization failure;
+- retrieval failure;
+- failure to drill down when needed;
 - overgeneralized cognition;
 - incorrect scope;
-- retrieval failure;
 - memory-utilization failure;
-- environment drift or stale cognition;
-- context pollution from irrelevant facts.
+- stale cognition after latent drift;
+- context pollution from irrelevant facts;
+- toxic cognition overriding contradictory facts.
 
-### RQ5: Which decisions should eventually be learned by RL?
+### Stage C: learned memory policy
+
+#### RQ7: Which decisions should eventually be learned by RL?
 
 Do not assume the answer in advance. Use the agentic system to determine whether the main bottleneck is:
 
-- candidate generation;
-- promotion or rejection;
-- scope revision;
-- retrieval;
-- forgetting or invalidation;
-- experiment selection.
+- selecting factual summaries;
+- deciding when to open detailed records;
+- generating candidate cognitions;
+- promoting, rejecting, or revising cognition;
+- deciding whether to use a cognition for the current decision;
+- forgetting or invalidating stale cognition;
+- selecting regression tests.
 
 ---
 
-## 3. Memory Hierarchy
+## 3. Memory Hierarchy and Provenance Graph
 
-The general architecture has three conceptual layers, but the first LatentGym implementation should focus on the bottom two.
+The initial implementation has three memory levels. A stable identity or soul layer may exist in a production assistant, but it is fixed and out of scope for the first LatentGym experiments.
 
-### 3.1 Soul layer
+### 3.1 Detailed factual memory
 
-Stable identity, goals, style, and hard constraints. Human-editable; the AI may propose changes but should not silently modify them.
+Detailed facts preserve the evidence with minimal transformation.
 
-For the initial Number Guessing experiment, keep this layer fixed and out of scope.
+Examples include:
 
-### 3.2 Cognitive layer
+- the original messages in an episode;
+- each guess and higher/lower response;
+- the exact environment feedback visible to the agent;
+- tool output, error text, or user wording in later environments;
+- references to the original trajectory and message indices.
 
-Reusable beliefs, strategies, or rules inferred from experience.
+A detailed fact should be immutable as an audit record. Corrections are represented by new records or metadata, not silent rewriting.
+
+Example:
+
+```json
+{
+  "detailed_fact_id": "df_ep3",
+  "trajectory_id": "traj_0001",
+  "episode_idx": 3,
+  "visible_messages": [
+    {"role": "assistant", "content": "500"},
+    {"role": "environment", "content": "The target is lower."},
+    {"role": "assistant", "content": "250"},
+    {"role": "environment", "content": "Correct. The target was 250."}
+  ],
+  "source_type": "agent_visible_transcript"
+}
+```
+
+### 3.2 Factual memory
+
+Factual memory is a compact, objective summary linked to one or more detailed records.
+
+Its canonical form is:
+
+```text
+context + action + observed outcome + source references
+```
+
+Facts must not introduce causal explanations, general rules, or advice.
+
+Valid factual memory:
+
+```text
+Episode 3; first guess was 500; feedback said lower; the revealed target was 250.
+```
+
+Invalid factual memory:
+
+```text
+The agent should start below 500 because targets in this session are usually small.
+```
+
+The invalid statement belongs in the cognitive layer.
+
+Factual memories may be somewhat compressed or incomplete. When the summary is ambiguous, surprising, contradictory, or high impact, the agent can follow the link to detailed facts.
+
+### 3.3 Cognitive memory
+
+Cognitive memory contains reusable beliefs, strategies, or rules inferred from factual memories.
 
 Every cognitive memory must contain:
 
-- `claim`: what the system believes;
-- `scope`: conditions under which the claim has been tested;
-- `action_implication`: how it should change a decision;
-- `supporting_fact_ids`: provenance to episodic facts;
-- `counterevidence_fact_ids`: known counterexamples;
-- `validation_runs`: paired regression results;
-- `status`: candidate, tentative, validated, revised, rejected, stale;
-- `confidence`: an evidence-based score, not merely LLM self-confidence.
+- `claim`: what the system currently believes;
+- `scope`: conditions under which the claim was tested or observed;
+- `action_implication`: how it may change a decision;
+- `supporting_fact_ids`: links to compact factual memories;
+- `counterevidence_fact_ids`: known conflicting facts;
+- `validation_runs`: formation-time regression results;
+- `status`: candidate, tentative, validated, revised, rejected, or stale;
+- `confidence`: evidence-based support, not LLM self-confidence.
 
-A cognition must never claim validity beyond its tested scope.
+A cognition must not claim validity beyond its tested scope.
 
-### 3.3 Fact / episodic layer
+### 3.4 Tree-like structure, implemented as a DAG
 
-Append-only records of:
-
-```text
-context + action + outcome + source
-```
-
-Facts must not contain causal explanation or advice. In particular, the fact layer should avoid language such as:
-
-- because;
-- therefore;
-- should;
-- always;
-- generally;
-- likely, unless this is a direct quote from a source and marked as such.
-
-Example valid fact:
+Conceptually:
 
 ```text
-Episode 3; context: first guess; action: guessed 137; outcome: correct;
-source: environment feedback.
+cognitive memory
+    -> supporting factual memories
+        -> detailed factual records
+            -> original visible sources
 ```
 
-Example invalid fact:
+In implementation, use IDs and references rather than a strict tree. The structure is usually a DAG because:
+
+- one factual memory may support several cognitions;
+- one cognition may depend on several facts;
+- one detailed record may generate several factual summaries.
+
+### 3.5 Provenance invariant
+
+Every decision and memory must support this trace:
 
 ```text
-The target is probably always one of the previously observed values.
+decision
+    -> loaded cognition IDs and factual-memory IDs
+    -> supporting factual-memory IDs
+    -> detailed-fact IDs
+    -> original agent-visible source messages
 ```
 
-The second statement belongs in the cognitive layer.
+The system should fail loudly when a reference is missing.
 
 ---
 
-## 4. Proposed Agentic Architecture
+## 4. Staged Agentic Architecture
+
+### 4.1 Stage A: factual-memory architecture
 
 ```mermaid
 flowchart TD
-    A[Task agent faces a decision] --> B[Decision-time retriever]
-    B --> C{Validated cognition found?}
-    C -->|Yes| D[Load applicable cognition]
-    C -->|No or insufficient| E[Search episodic facts]
-    D --> F[Task agent acts]
+    A[Task agent reaches a concrete decision] --> B[Factual retriever]
+    B --> C[Load compact factual memories]
+    C --> D{Ambiguous, contradictory, or insufficient?}
+    D -->|Yes| E[Open linked detailed facts]
+    D -->|No| F[Task agent acts]
     E --> F
     F --> G[Environment feedback and reward]
-    G --> H[Fact extractor]
-    H --> I[Append-only episodic store]
-    F --> J[Decision logger]
-    D --> J
-    E --> J
-    I --> K[Hypothesis generator]
-    K --> L[Candidate cognitive store]
-    L --> M[Regression controller]
-    M --> N[Paired rollouts: facts only vs facts plus cognition]
-    N --> O[Effect estimator]
-    O --> P[Cognition updater]
-    P --> Q[Validated/revised/rejected cognitive store]
-    Q --> B
+    G --> H[Detailed fact recorder]
+    H --> I[Append-only detailed fact store]
+    I --> J[Factual summarizer]
+    J --> K[Factual memory store]
+    B --> L[Decision logger]
+    E --> L
+    F --> L
 ```
 
-### Components
+### 4.2 Stage B: add cognitive memory
+
+```mermaid
+flowchart TD
+    A[Factual memory store] --> B[Hypothesis generator]
+    B --> C[Candidate cognition with scope and provenance]
+    C --> D[Regression controller]
+    D --> E[Paired rollouts: facts only vs facts plus cognition]
+    E --> F[Effect estimator]
+    F --> G[Cognition updater]
+    G --> H[Cognitive store]
+    H --> I[Decision-time retriever]
+    I --> J[Return cognition together with supporting facts]
+    J --> K{Applicable to current decision?}
+    K -->|Unclear or conflict| L[Open detailed facts]
+    K -->|Yes| M[Use cognition]
+    K -->|No| N[Ignore cognition]
+    L --> M
+    L --> N
+```
+
+### 4.3 Components
 
 1. **Task agent**
    - Existing LatentGym model interface.
    - Solves the game.
-   - Model parameters remain frozen in the agentic phase.
+   - Model parameters remain frozen in the initial agentic experiments.
 
-2. **Fact extractor**
-   - Converts an episode or decision trajectory into factual records.
-   - For Number Guessing v0, use a deterministic parser whenever possible.
-   - Later environments may use one constrained LLM call.
+2. **Detailed fact recorder**
+   - Saves agent-visible trajectory fragments with exact source references.
+   - Uses no LLM in Number Guessing v0.
 
-3. **Episodic store**
-   - Python list plus JSON serialization for v0.
-   - Append-only audit log.
+3. **Detailed fact store**
+   - Append-only JSON or JSONL for v0.
+   - Supports lookup by detailed-fact ID.
 
-4. **Hypothesis generator**
-   - One constrained LLM call over selected facts.
-   - Proposes structured, falsifiable candidate cognitions.
+4. **Factual summarizer**
+   - Produces compact objective records from detailed facts.
+   - Deterministic in Number Guessing v0.
+   - Later environments may use a constrained LLM call.
+
+5. **Factual memory store**
+   - Stores compact facts and links to detailed records.
+   - Supports decision-conditioned retrieval.
+
+6. **Drill-down controller**
+   - Allows the task agent or deterministic policy to open detailed records.
+   - Triggers may include conflict, ambiguity, low confidence, or high-risk decisions.
+
+7. **Decision logger**
+   - Records what was retrieved, what was opened, what the model cited, the action, and the outcome.
+
+8. **Hypothesis generator**
+   - Added only after factual-memory experiments are stable.
+   - Proposes structured, falsifiable candidate cognitions from factual memories.
    - Does not validate its own output.
 
-5. **Regression controller**
+9. **Regression controller**
    - Ordinary deterministic code.
-   - Forks a common prefix into paired suffix rollouts.
-   - Controls treatment and control prompts, seeds, target sequences, and evaluation.
+   - Forks or replays a common prefix into paired suffix rollouts.
+   - Tests candidate cognition while holding factual evidence fixed.
 
-6. **Effect estimator**
-   - Ordinary statistical code.
-   - Computes paired differences in downstream performance and harm.
+10. **Effect estimator**
+    - Computes paired downstream effects and harm.
 
-7. **Cognitive store / updater**
-   - Stores candidate and validated cognitions with scope, evidence, and status.
-   - Revises scope rather than treating every counterexample as total rejection.
+11. **Cognitive store / updater**
+    - Stores cognition with tested scope, provenance, and status.
+    - Revises scope rather than treating every counterexample as global rejection.
 
-8. **Decision-time retriever**
-   - Queries memory at a concrete decision point, not only once at task start.
-   - V0 may inject memory at the start of an episode for implementation simplicity.
-   - V1 should retrieve specifically before the first strategic decision.
-
-9. **Decision logger**
-   - Records which memories were loaded, which the model cited or appeared to use, the action, and the outcome.
+12. **Decision-time cognition checker**
+    - Evaluates current applicability.
+    - Returns supporting facts with cognition.
+    - Opens detailed records when facts and cognition conflict.
 
 ---
 
@@ -256,32 +388,29 @@ z = {137, 793}
 
 A trajectory contains multiple episodes whose targets are sampled from the same latent.
 
-### Example facts
+### 5.1 Detailed factual record
 
 ```json
 {
-  "fact_id": "f1",
+  "detailed_fact_id": "df_ep0",
   "trajectory_id": "traj_0001",
   "episode_idx": 0,
-  "decision_idx": 0,
-  "context": {
-    "environment": "number_guessing",
-    "latent_session": "traj_0001",
-    "decision_type": "first_guess"
-  },
-  "action": "500",
-  "outcome": "target was lower than 500",
-  "source": {
-    "type": "environment_feedback",
-    "message_index": 2
-  },
-  "verified": true
+  "message_refs": [0, 1, 2, 3],
+  "visible_transcript": [
+    "Agent guessed 500",
+    "Environment: lower",
+    "Agent guessed 137",
+    "Environment: correct; target was 137"
+  ],
+  "source_type": "agent_visible_transcript"
 }
 ```
 
+### 5.2 Compact factual memory
+
 ```json
 {
-  "fact_id": "f2",
+  "fact_id": "f_ep0_outcome",
   "trajectory_id": "traj_0001",
   "episode_idx": 0,
   "context": {
@@ -291,16 +420,23 @@ A trajectory contains multiple episodes whose targets are sampled from the same 
   },
   "action": "final guess 137",
   "outcome": "correct target was 137",
-  "source": {
-    "type": "environment_feedback"
-  },
+  "detailed_fact_ids": ["df_ep0"],
   "verified": true
 }
 ```
 
-### Example candidate cognitions
+After several episodes, the factual memory presented to the agent may be:
 
-Good or plausible candidate:
+```text
+Verified records from this trajectory:
+- Episode 1 target was 137.
+- Episode 2 target was 793.
+- Episode 3 target was 137.
+```
+
+No rule is asserted yet.
+
+### 5.3 Candidate cognition, added later
 
 ```json
 {
@@ -311,13 +447,13 @@ Good or plausible candidate:
     "latent_session": "current trajectory before reset or detected drift"
   },
   "action_implication": "Try previously observed targets before restarting binary search.",
-  "supporting_fact_ids": ["f2", "f7", "f12"],
-  "falsification_condition": "Multiple later targets lie outside the observed set.",
+  "supporting_fact_ids": ["f_ep0_outcome", "f_ep1_outcome", "f_ep2_outcome"],
+  "counterevidence_fact_ids": [],
   "status": "candidate"
 }
 ```
 
-Plausible but potentially toxic candidate:
+A plausible but potentially toxic cognition is:
 
 ```json
 {
@@ -328,25 +464,50 @@ Plausible but potentially toxic candidate:
     "latent_session": "current trajectory"
   },
   "action_implication": "Guess the value different from the previous target first.",
-  "supporting_fact_ids": ["f2", "f7", "f12"],
-  "falsification_condition": "The same target appears in consecutive episodes.",
+  "supporting_fact_ids": ["f_ep0_outcome", "f_ep1_outcome", "f_ep2_outcome"],
+  "counterevidence_fact_ids": [],
   "status": "candidate"
 }
 ```
 
-The regression system should distinguish these without access to hidden future targets during decision-making.
+### 5.4 Invocation-time conflict example
+
+Suppose `h2` passed a small early test, but the factual store later contains:
+
+```text
+Episode 4 target was 137.
+Episode 5 target was also 137.
+```
+
+At the next decision, the system should not present `h2` alone. It should return the conflicting facts and allow the agent to inspect the detailed episodes. The likely update is to reject or narrow `h2`, not to ignore the evidence because the rule was previously validated.
 
 ---
 
 ## 6. Data Schemas
 
-Implement dataclasses or Pydantic models. Start with plain dataclasses if the repository does not already depend on Pydantic.
+Use dataclasses or Pydantic models, following repository conventions.
 
-### 6.1 `EpisodicFact`
+### 6.1 `DetailedFact`
 
 ```python
 @dataclass
-class EpisodicFact:
+class DetailedFact:
+    detailed_fact_id: str
+    trajectory_id: str
+    episode_idx: int
+    decision_idx: int | None
+    source_type: str
+    source_refs: list[dict[str, Any]]
+    visible_content: list[dict[str, Any]]
+    created_at: str
+    metadata: dict[str, Any]
+```
+
+### 6.2 `FactualMemory`
+
+```python
+@dataclass
+class FactualMemory:
     fact_id: str
     trajectory_id: str
     episode_idx: int
@@ -354,13 +515,13 @@ class EpisodicFact:
     context: dict[str, Any]
     action: str | None
     outcome: str
-    source_type: str
-    source_ref: dict[str, Any]
+    detailed_fact_ids: list[str]
     verified: bool
     created_at: str
+    status: str  # active, corrected, obsolete, archived
 ```
 
-### 6.2 `CognitiveMemory`
+### 6.3 `CognitiveMemory`
 
 ```python
 @dataclass
@@ -378,7 +539,7 @@ class CognitiveMemory:
     revision_parent_id: str | None
 ```
 
-### 6.3 `DecisionTrace`
+### 6.4 `DecisionTrace`
 
 ```python
 @dataclass
@@ -389,14 +550,16 @@ class DecisionTrace:
     decision_type: str
     query: str
     loaded_fact_ids: list[str]
+    opened_detailed_fact_ids: list[str]
     loaded_cognition_ids: list[str]
     cited_memory_ids: list[str]
+    applicability_judgments: dict[str, str]
     action: str
     outcome: str
     reward: float | None
 ```
 
-### 6.4 `RegressionRun`
+### 6.5 `RegressionRun`
 
 ```python
 @dataclass
@@ -406,7 +569,7 @@ class RegressionRun:
     source_trajectory_id: str
     fork_episode_idx: int
     suffix_episode_indices: list[int]
-    condition: str  # control or treatment
+    condition: str  # facts_only or facts_plus_cognition
     seed: int
     episode_rewards: list[float]
     episode_turns: list[int]
@@ -415,61 +578,143 @@ class RegressionRun:
     failure_tags: list[str]
 ```
 
-### 6.5 Provenance invariant
+### 6.6 Reference validation
 
-Every cognition must resolve to facts, and every loaded memory must resolve to a decision:
+Add checks enforcing:
 
 ```text
-decision -> cognition IDs -> supporting fact IDs -> original sources
+cognition -> valid factual-memory IDs
+factual memory -> valid detailed-fact IDs
+decision trace -> valid loaded-memory IDs
 ```
-
-Add validation checks that fail loudly when provenance is broken.
 
 ---
 
-## 7. Fact Extraction
+## 7. Detailed Recording and Factual Summarization
 
-### 7.1 Number Guessing v0: deterministic extraction
+### 7.1 Number Guessing v0: deterministic implementation
 
-Do not use an LLM if the required fact is already available in agent-visible feedback.
+Do not use an LLM when the required information is already available in agent-visible feedback.
 
-Extract only information that was visible to the agent, such as:
+Record:
 
 - guesses made;
 - higher/lower feedback;
 - whether the episode was solved;
 - target revealed through configured inter-episode feedback;
 - number of turns;
-- explicit strategy statements in the action text, if needed and tagged as `agent_statement`, not verified truth.
+- exact visible message references.
 
-Never extract from evaluator-only fields such as future `episode_configs` for the memory pipeline.
+Never read evaluator-only fields for the memory pipeline.
 
-### 7.2 General constrained LLM extractor
+### 7.2 Factual-summary constraints
 
-For later environments, use a prompt such as:
+A factual summary must:
+
+- state the context;
+- state the action, if relevant;
+- state the observed outcome;
+- retain links to detailed evidence;
+- avoid causes, advice, preferences, or general rules not explicitly stated by the source.
+
+For later environments, use a constrained prompt:
 
 ```text
-Extract only factual events explicitly supported by the interaction transcript.
-For every event return:
+Summarize only factual events explicitly supported by the supplied record.
+For each fact return:
 - context;
 - action;
 - observed outcome;
-- exact source message indices;
-- source type;
-- whether the environment verified it.
+- detailed-record IDs;
+- whether the outcome was environment-verified.
 
 Do not infer causes, preferences, rules, advice, or future strategy.
-Do not use words such as because, therefore, should, always, or generally.
+Do not use because, therefore, should, always, generally, or likely unless quoting a source and marking it as a quote.
 Return valid JSON only.
 ```
 
-Validate the JSON. Reject and retry once on schema failure. Do not silently accept malformed records.
+### 7.3 Detailed drill-down
+
+The first implementation may use a simple rule:
+
+Open a detailed fact when at least one condition holds:
+
+- two retrieved factual summaries appear inconsistent;
+- a summary omits information needed for the current decision;
+- a retrieved cognition conflicts with a fact;
+- the task agent explicitly requests evidence;
+- the action is designated high risk;
+- the factual summary was generated with low confidence.
+
+For Number Guessing, first implement an explicit tool-like call:
+
+```text
+OPEN_DETAILED_FACT <fact_id>
+```
+
+The runner resolves the fact ID and returns only the linked agent-visible record.
 
 ---
 
-## 8. Hypothesis Generation
+## 8. Stage A: Factual-Memory Experiments
 
-The generator consumes a selected set of episodic facts and proposes at most a small number of candidate cognitions.
+The first experiments should stop here. They do not require cognitive memory.
+
+### 8.1 Conditions
+
+1. **No cross-task memory**
+   - clear earlier episode context;
+   - each episode begins without past records.
+
+2. **Full history**
+   - existing LatentGym single-agent behavior.
+
+3. **Compact factual memory**
+   - remove raw prior dialogue;
+   - inject retrieved factual summaries only.
+
+4. **Detailed factual memory only**
+   - provide raw linked records without compact summaries;
+   - useful mainly as an ablation because it may be expensive.
+
+5. **Hierarchical factual memory**
+   - provide compact factual summaries;
+   - allow selective drill-down to detailed records.
+
+6. **Matched-budget factual memory**
+   - compare full history and factual memory under an approximately matched token budget where feasible.
+
+### 8.2 Primary metrics
+
+- cumulative reward;
+- per-episode reward;
+- final-episode reward;
+- success rate;
+- mean turns;
+- first-guess accuracy;
+- factual-memory token cost;
+- detailed-fact drill-down count and token cost;
+- irrelevant-memory load rate;
+- contradiction-resolution rate;
+- severe memory harm rate.
+
+### 8.3 Acceptance criteria before Stage B
+
+Proceed to cognitive memory only after:
+
+- factual records contain no hidden ground truth;
+- factual summaries can be traced to detailed records;
+- no-memory, full-history, and factual-memory conditions run on identical trajectory files;
+- at least one factual-memory condition produces interpretable behavior, even if it does not beat full history;
+- failures can be attributed to recording, summarization, retrieval, utilization, or drill-down.
+
+A null result is still useful. If facts do not help, investigate why before adding cognition.
+
+---
+
+## 9. Stage B: Hypothesis and Cognitive-Memory Generation
+
+The generator consumes selected factual memories, not raw evaluator state.
 
 ### Required output
 
@@ -489,12 +734,12 @@ The generator consumes a selected set of episodic facts and proposes at most a s
 ```text
 You are a hypothesis generator, not a validator.
 
-Given the verified episodic facts below, propose at most TWO candidate cognitive memories that may improve future decisions.
+Given the verified factual memories below, propose at most TWO candidate cognitive memories that may improve future decisions.
 
 Each candidate must:
 1. be supported by at least two listed facts;
 2. state a narrow scope no broader than the evidence;
-3. specify how it changes a future action;
+3. specify how it may change a future action;
 4. specify what future observation would falsify it;
 5. cite fact IDs exactly;
 6. remain tentative;
@@ -506,27 +751,28 @@ Return JSON only.
 
 ### Initial debugging order
 
-Before enabling automatic generation:
-
-1. Test one handwritten good cognition.
+1. Test one handwritten useful cognition.
 2. Test one handwritten plausible-but-wrong cognition.
-3. Confirm that the regression framework distinguishes them.
-4. Only then add the LLM hypothesis generator.
+3. Confirm that facts plus invocation-time checking can expose contradictions.
+4. Confirm that the regression harness distinguishes benefit from harm.
+5. Only then enable automatic LLM hypothesis generation.
 
 ---
 
-## 9. Regression Validation
+## 10. Formation-Time Regression Validation
 
-### 9.1 Core paired design
+Regression validation remains part of the design. It is not replaced by invocation-time reasoning.
+
+### 10.1 Core paired design
 
 After observing a prefix of `k` episodes:
 
-1. Freeze the episodic facts and candidate cognition.
+1. Freeze the factual memories and candidate cognition.
 2. Use the same held-out trajectory suffix for both conditions.
 3. Run:
-   - **Control:** episodic facts only;
-   - **Treatment:** identical episodic facts plus one candidate cognition.
-4. Keep model, prompts, environment configuration, target sequence, and sampling configuration as equal as possible.
+   - **Control:** factual memories only;
+   - **Treatment:** identical factual memories plus one candidate cognition.
+4. Keep model, environment configuration, target sequence, and sampling configuration as equal as possible.
 5. Repeat across many trajectory seeds.
 
 ```text
@@ -534,220 +780,256 @@ common prefix episodes 0 ... k-1
                 |
                 +--> control suffix: facts only
                 |
-                +--> treatment suffix: facts + candidate cognition
+                +--> treatment suffix: same facts + candidate cognition
 ```
 
-### 9.2 Important implementation caution
+### 10.2 Safe replay
 
-The easiest robust implementation may be to create two fresh environments from the same saved trajectory JSON and replay or reconstruct the common prefix, rather than trying to deep-copy a live environment with non-serializable state.
+Prefer two fresh environments created from the same saved trajectory JSON and deterministic replay of the common prefix unless the environment supports safe state serialization.
 
-Cursor should first inspect whether the environment supports safe state serialization. If not, prefer deterministic replay.
+Abort a pair when suffix states do not match.
 
-### 9.3 Treatment prompt
+### 10.3 Treatment prompt
 
 ```text
-Verified past records:
+Candidate cognitive memory:
+- Claim: ...
+- Tested scope: ...
+- Suggested action implication: ...
+
+Supporting factual records:
 - ...
 
-Tentative cognitive memory, validated only within the stated scope:
-- Claim: ...
-- Scope: ...
-- Suggested decision implication: ...
-
-Treat this as fallible guidance. Current explicit evidence overrides it.
+This is fallible guidance, not a command. Current explicit evidence overrides it.
+You may request the linked detailed records if the summaries are insufficient or contradictory.
 ```
 
-### 9.4 Control prompt
+### 10.4 Test categories
 
-Include the same episodic facts and approximately comparable formatting, but omit the cognitive claim.
+Eventually include:
 
-### 9.5 Test categories
+- positive / in-scope tests;
+- irrelevant tests;
+- boundary tests;
+- latent-drift tests;
+- distractor tests;
+- cognition-corruption tests.
 
-For each cognition, eventually evaluate:
+### 10.5 Effect estimation
 
-1. **Positive / in-scope tests**
-   - The cognition should improve behavior.
-2. **Negative / irrelevant tests**
-   - The cognition should not change behavior materially.
-3. **Boundary tests**
-   - Explicit conditions override the cognition.
-4. **Drift tests**
-   - The latent changes and the cognition becomes stale.
-5. **Distractor tests**
-   - Irrelevant facts are added.
-6. **Corruption tests**
-   - A deliberately incorrect cognition is injected to measure toxicity.
-
----
-
-## 10. Effect Estimation
-
-Primary paired effect for cognition `h`:
+Primary paired effect:
 
 ```text
-Delta_reward(h) = suffix_reward(treatment) - suffix_reward(control)
+Delta_reward(h) = suffix_reward(facts + h) - suffix_reward(facts only)
 ```
 
 Also compute:
 
 - paired difference in mean turns;
-- paired difference in final-episode reward;
 - first-guess accuracy difference;
 - success-rate difference;
-- harm rate: fraction of paired suffixes where treatment is worse;
-- severe harm rate: treatment changes a control success into a failure;
+- harm rate;
+- severe harm rate;
 - memory token cost;
-- stale-memory recovery speed after drift;
-- decision-level memory-use rate.
+- stale-memory recovery speed.
 
-### Promotion policy for the non-RL MVP
+### 10.6 Non-RL status update
 
-Use a transparent heuristic, not a black-box score:
+Use transparent states:
 
-- `validated_within_scope`:
-  - positive mean paired effect;
-  - acceptable harm rate;
-  - enough paired runs;
-  - no major boundary failure.
-- `revised`:
-  - helpful in a subset of contexts but harmful outside it;
-  - shrink or split scope, then rerun tests.
-- `rejected`:
-  - no benefit or systematic harm.
-- `tentative`:
-  - insufficient evidence.
-- `stale`:
-  - previously useful but contradicted after drift or version change.
+- `validated_within_scope`;
+- `revised`;
+- `rejected`;
+- `tentative`;
+- `stale`.
 
-Do not hard-code statistical thresholds until empirical variance is understood. Initially report confidence intervals and full paired-difference distributions.
+Report confidence intervals and paired-difference distributions before hard-coding thresholds.
 
 ---
 
-## 11. Retrieval Design
+## 11. Invocation-Time Applicability Judgment
 
-### 11.1 Principle
+A cognition that passed regression tests is still not automatically applicable.
 
-Retrieve memory at the moment of a concrete decision:
+At a concrete decision point:
+
+1. retrieve candidate or validated cognitions matching the current decision;
+2. retrieve their supporting factual memories at the same time;
+3. compare the current context with the cognition's tested scope;
+4. look for conflicting or newer facts;
+5. open linked detailed facts when ambiguity remains;
+6. explicitly choose:
+   - use cognition;
+   - ignore cognition;
+   - use only part of it;
+   - revise scope;
+   - mark stale or contradicted.
+
+The decision trace should record this applicability judgment.
+
+### Important experimental comparison
+
+Compare:
+
+- cognition only;
+- facts only;
+- cognition plus supporting facts;
+- cognition plus facts plus selective detailed drill-down.
+
+This directly tests whether fact retention makes experience safer and more adaptable than skill-like memory alone.
+
+---
+
+## 12. Retrieval Design
+
+### 12.1 Principle
+
+Retrieve memory when the task agent faces a concrete decision:
 
 ```text
-I am about to choose action X. Which prior facts or validated rules would change this action?
+I am about to choose action X. Which past facts or tested cognitions could change this action?
 ```
 
-Avoid broad topic-similarity retrieval at task start when the decision is still underspecified.
+Avoid broad topic-similarity retrieval only at task start when the decision is underspecified.
 
-### 11.2 Practical v0
+### 12.2 Stage A retrieval
 
-For Number Guessing, begin with retrieval before the first guess of each episode:
+Before the first strategic action of an episode:
 
-1. retrieve validated cognition matching the current latent session scope;
-2. if none is sufficient, retrieve up to ten high-information facts;
-3. label facts as fallible historical records;
-4. log exactly what was loaded.
+1. retrieve up to `K` factual summaries from the current trajectory/session;
+2. rank surprising outcomes and failures above routine events;
+3. allow the agent to request a linked detailed record;
+4. log exactly what was loaded and opened.
 
-### 11.3 Three-stage retrieval
+For the first implementation, retrieval can be deterministic because Number Guessing has a small store.
 
-1. Cognitive layer first.
-2. Decision cache second.
-3. Episodic fact search third.
+### 12.3 Stage B retrieval
 
-For v0, omit the cache and implement:
+When cognition exists:
 
-```text
-cognitive store -> episodic store
-```
+1. retrieve cognition matching the decision context;
+2. always return supporting factual memories with it;
+3. return counterevidence when available;
+4. permit detailed drill-down;
+5. do not let cognition silently override newer explicit facts.
 
-### 11.4 Ranking episodic facts
+### 12.4 Initial ranking features
 
-Start with deterministic features:
+Use deterministic features first:
 
 - same environment;
 - same trajectory or latent session;
 - same decision type;
-- failures and surprising outcomes above routine successes;
+- verified outcomes;
+- surprising outcomes and failures;
 - recency as a weak tiebreaker;
-- facts previously used in successful decisions.
+- past successful use.
 
 Do not add a learned retriever initially.
 
 ---
 
-## 12. Provenance and Self-Correction
+## 13. Provenance and Self-Correction
 
 Every decision should log:
 
-- retrieved memories;
-- memories actually cited by the task agent, if any;
+- retrieved factual memories;
+- opened detailed records;
+- retrieved cognitive memories;
+- memories explicitly cited or referenced by the task agent;
+- applicability judgments;
 - action;
 - reward and outcome.
 
 Use these logs to support:
 
-- down-ranking facts repeatedly loaded but never used;
+- down-ranking facts repeatedly loaded but never useful;
+- identifying summaries that repeatedly force detailed drill-down;
 - lowering confidence in cognitions repeatedly present in failed decisions;
-- tracing a failure back to a specific cognition and its supporting facts;
+- tracing failure to a cognition, factual summary, or original record;
 - retracting a cognition and finding prior decisions that depended on it;
-- rebuilding the cognitive layer by replaying the fact store.
-
-Do not silently delete facts. Mark corrections or obsolescence through new records or metadata so the audit trail remains intact.
+- rebuilding cognition from the factual stores;
+- marking stale or obsolete facts without destroying the audit trail.
 
 ---
 
-## 13. Experimental Conditions
+## 14. Experimental Conditions by Stage
 
-### Minimum baseline set
+### 14.1 Stage A: factual memory
 
-1. **No memory**
-   - Clear cross-episode context.
-2. **Full history**
-   - Existing LatentGym single-agent behavior.
-3. **Episodic facts only**
-   - Compact verified records; no cognition.
-4. **Naive cognition**
-   - LLM-generated cognition accepted immediately.
-5. **Evidence-gated cognition**
-   - Requires multiple facts, scope, provenance; no regression validation.
-6. **Regression-validated cognition**
-   - Full proposed agentic method.
-7. **Oracle cognition**
-   - Handwritten correct cognition to test whether the task agent can use it.
-8. **Toxic cognition**
-   - Handwritten plausible but incorrect cognition to quantify harm.
+Minimum set:
 
-### Key ablations
+1. no memory;
+2. full history;
+3. compact factual memory;
+4. detailed facts only;
+5. hierarchical facts with drill-down;
+6. oracle factual summary, if needed to separate summarization failure from memory utility.
 
-- facts with versus without source labels;
+Key ablations:
+
+- facts with versus without source references;
+- deterministic summaries versus LLM summaries;
+- episode-start retrieval versus first-decision retrieval;
+- raw history versus compact facts under matched budget;
+- always-open details versus selective drill-down;
+- conflict-present versus conflict-absent trajectories.
+
+### 14.2 Stage B: cognition
+
+Minimum set:
+
+1. facts only;
+2. cognition only;
+3. facts plus naive cognition;
+4. facts plus evidence-gated cognition;
+5. facts plus regression-validated cognition;
+6. validated cognition plus invocation-time fact checking;
+7. oracle cognition;
+8. toxic cognition.
+
+Key ablations:
+
+- cognition with versus without supporting facts;
 - cognition with versus without explicit scope;
-- task-start retrieval versus decision-time retrieval;
-- raw history versus compact facts under matched token budgets;
-- one versus multiple candidate hypotheses;
+- cognition with versus without detailed drill-down;
 - regression validation with only positive tests versus positive plus boundary/drift tests;
 - current-session scope versus global scope.
 
 ---
 
-## 14. Evaluation Protocol
+## 15. Evaluation Protocol
 
 ### Debug stage
 
-- one environment: `number_guessing`;
-- one easy latent such as a recurring small set;
+- environment: `number_guessing`;
+- one easy recurring-set latent;
 - 3 to 5 trajectories;
 - deterministic or low-temperature task agent;
-- inspect every trajectory manually.
+- manually inspect every trajectory and provenance chain.
 
-### Pilot stage
+### Factual-memory pilot
 
 - 30 to 50 trajectories per condition;
 - fixed trajectory files shared across conditions;
+- several memory budgets;
+- at least one stationary and one drift/conflict setting;
+- complete Stage A before enabling automatic cognitive memory.
+
+### Cognitive-memory pilot
+
+- use the same factual-memory pipeline;
 - several prefix lengths `k`;
-- at least one stationary and one drift setting.
+- handwritten good and toxic cognitions first;
+- paired regression suffixes;
+- LLM-generated cognition only after the harness is verified.
 
 ### Main stage
 
-- all relevant Number Guessing latents;
+- relevant Number Guessing latents;
 - held-out latents for generalization;
 - 100+ paired trajectories where affordable;
-- one second environment only after the pipeline is stable.
+- a second LatentGym environment only after the pipeline is stable.
 
 ### Report
 
@@ -755,39 +1037,44 @@ Produce:
 
 - overall metrics table;
 - per-episode reward and turn curves;
-- paired effect plots;
+- factual-memory retrieval and drill-down statistics;
+- paired cognition-effect plots;
 - harm-rate table;
-- cognition survival / revision table;
+- cognition survival and revision table;
 - qualitative provenance traces for successes and failures.
 
 ---
 
-## 15. Suggested Repository Layout
+## 16. Suggested Repository Layout
 
-Do not overwrite current LatentGym modules. Add a separate package first:
+Add isolated modules first:
 
 ```text
 latentgym/
 ├── memory/
 │   ├── __init__.py
-│   ├── types.py                 # schemas/dataclasses
-│   ├── fact_extractor.py        # deterministic + optional LLM extractor
-│   ├── episodic_store.py
+│   ├── types.py
+│   ├── detailed_fact_recorder.py
+│   ├── detailed_fact_store.py
+│   ├── factual_summarizer.py
+│   ├── factual_store.py
+│   ├── factual_retriever.py
+│   ├── drilldown_controller.py
+│   ├── decision_logger.py
 │   ├── hypothesis_generator.py
 │   ├── cognitive_store.py
-│   ├── retriever.py
-│   ├── decision_logger.py
+│   ├── cognition_checker.py
 │   ├── regression_controller.py
 │   ├── effect_estimator.py
 │   └── prompts/
-│       ├── extract_events.txt
+│       ├── summarize_facts.txt
 │       └── generate_hypotheses.txt
 │
 ├── eval/
 │   └── memory_agent/
 │       ├── __init__.py
-│       ├── runner.py            # memory-aware APIRunner variant
-│       ├── paired_runner.py     # common-prefix paired suffix evaluation
+│       ├── runner.py
+│       ├── paired_runner.py
 │       └── metrics.py
 │
 ├── configs/
@@ -796,24 +1083,26 @@ latentgym/
 │
 └── experiments/
     └── memory/
-        ├── run_baselines.py
-        ├── run_regression.py
+        ├── run_factual_baselines.py
+        ├── run_cognitive_regression.py
         └── analyze_effects.py
 
 tests/
 └── memory/
-    ├── test_fact_constraints.py
+    ├── test_no_ground_truth_leakage.py
+    ├── test_detailed_fact_roundtrip.py
+    ├── test_factual_constraints.py
     ├── test_provenance.py
-    ├── test_store_roundtrip.py
+    ├── test_drilldown.py
     ├── test_paired_runner.py
-    └── test_no_ground_truth_leakage.py
+    └── test_status_transitions.py
 ```
 
-If the repository does not have a top-level `tests/` directory, inspect existing conventions and place tests accordingly.
+Follow existing repository test conventions if they differ.
 
 ---
 
-## 16. Integration Points with Existing LatentGym
+## 17. Integration Points with Existing LatentGym
 
 Expected existing flow:
 
@@ -831,157 +1120,217 @@ The memory-aware runner should:
 
 1. reuse the existing `ModelInterface`;
 2. reuse environment construction and trajectory files;
-3. preserve `TrajectoryResult` compatibility if possible;
-4. add memory logs as optional metadata rather than breaking existing fields;
-5. hook into episode boundaries;
-6. control conversation compaction or clearing between episodes;
-7. inject retrieved memory into messages without exposing evaluator-only fields.
+3. preserve `TrajectoryResult` compatibility where possible;
+4. add detailed-fact, factual-memory, cognition, and decision logs as optional metadata;
+5. hook into episode and decision boundaries;
+6. control raw-history retention or clearing between episodes;
+7. inject retrieved facts without exposing evaluator-only fields;
+8. expose a safe detailed-fact lookup tool;
+9. later support cognition together with its evidence.
 
-Before coding, Cursor must identify the exact episode-boundary signal and document it in a short code comment or developer note.
+Before coding, Cursor must identify the exact episode-boundary signal and document it.
 
 ---
 
-## 17. Step-by-Step Implementation Plan
+## 18. Step-by-Step Implementation Plan
 
-### Phase 0: Reproduce LatentGym
+### Phase 0: reproduce LatentGym
 
 Acceptance criteria:
 
-- install succeeds;
+- installation succeeds;
 - mock-model sanity check succeeds;
 - one Number Guessing evaluation succeeds;
-- trajectory viewer or JSON inspection works;
-- exact episode-boundary code path is documented.
+- trajectory JSON or viewer works;
+- exact episode-boundary and message-retention paths are documented.
 
-Do not edit memory code yet.
-
-### Phase 1: Explicit episodic facts
+### Phase 1: detailed and compact factual stores
 
 Tasks:
 
-- add schemas;
-- implement append-only JSON store;
-- implement deterministic Number Guessing fact extraction;
+- add `DetailedFact` and `FactualMemory` schemas;
+- implement append-only serialization;
+- implement deterministic Number Guessing recording and summarization;
 - add provenance validation;
-- implement memory-aware runner with no cognition;
-- run no-memory, full-history, and episodic-only conditions.
+- add decision logging.
 
 Acceptance criteria:
 
-- all facts are derived only from agent-visible messages;
-- facts contain no inferred advice;
-- same trajectory files are reused across conditions;
-- results are saved in current LatentGym-compatible output form plus memory logs.
+- every compact fact resolves to agent-visible detailed evidence;
+- no inferred advice enters the factual layer;
+- hidden evaluator fields never enter memory.
 
-### Phase 2: Paired regression harness with handwritten cognition
+### Phase 2: factual retrieval and hierarchical drill-down
 
 Tasks:
 
-- implement common-prefix fork or deterministic replay;
-- add one good and one toxic handwritten cognition;
-- run paired control/treatment suffixes;
+- implement no-memory, full-history, compact-fact, detailed-only, and hierarchical-fact conditions;
+- retrieve before the first strategic decision;
+- implement `OPEN_DETAILED_FACT` or equivalent;
+- measure retrieval and drill-down cost;
+- add conflict and drift cases.
+
+Acceptance criteria:
+
+- identical trajectory files are reused across conditions;
+- the system can identify when a factual summary is insufficient;
+- performance and cost differences are interpretable;
+- Stage A results are reviewed before cognitive-memory work begins.
+
+### Phase 3: handwritten cognition and paired regression
+
+Tasks:
+
+- add one useful and one toxic handwritten cognition;
+- link each to factual support;
+- implement common-prefix replay or forking;
+- run facts-only versus facts-plus-cognition suffixes;
 - compute paired metrics;
-- inspect failure cases.
+- test invocation-time conflict handling.
 
 Acceptance criteria:
 
-- both branches receive identical episodic facts;
-- only treatment receives the candidate cognition;
-- future targets are not leaked;
-- the evaluator can distinguish beneficial and harmful cognition on at least a small pilot.
+- both branches receive identical facts;
+- only treatment receives cognition;
+- useful and harmful cognition can be distinguished;
+- contradictory facts can override cognition at invocation time.
 
-### Phase 3: LLM hypothesis generation
+### Phase 4: LLM hypothesis generation and cognitive lifecycle
 
 Tasks:
 
-- implement structured prompt;
-- validate output schema;
-- attach fact provenance;
-- cap candidates at two;
-- test naive, evidence-gated, and regression-validated pipelines.
+- implement structured candidate generation;
+- validate cited fact IDs;
+- cap candidate count;
+- add regression status updates;
+- add scope revision and stale handling;
+- compare cognition-only with facts-plus-cognition.
 
 Acceptance criteria:
 
-- every generated cognition cites valid facts;
-- malformed or unsupported candidates are rejected;
-- validation results are attached to the cognition record.
+- every cognition cites valid facts;
+- regression outcomes are attached;
+- each use decision records applicability reasoning and evidence access;
+- cognitive memory never replaces its factual provenance.
 
-### Phase 4: Scope revision, retrieval, and provenance
-
-Tasks:
-
-- add scope fields;
-- add boundary and drift tests;
-- revise rather than globally reject partially valid cognition;
-- retrieve at first-decision time;
-- log loaded and used memories;
-- add a simple decision cache only if needed.
-
-Acceptance criteria:
-
-- stale cognition can be detected or down-ranked;
-- each failed decision can be traced to loaded memory;
-- cognitive store can be rebuilt from episodic facts and validation records.
-
-### Phase 5: Generalization
+### Phase 5: generalization and learned policy
 
 Tasks:
 
-- run held-out Number Guessing latents;
-- add one second LatentGym environment;
-- identify which architecture assumptions transfer and which are environment-specific.
+- test held-out Number Guessing latents;
+- add a second environment only after stability;
+- identify the concrete routing or consolidation bottleneck;
+- select one narrow RL target.
 
 ---
 
-## 18. Testing Requirements
+## 19. Testing Requirements
 
 ### Unit tests
 
-- fact records reject prohibited inferential language where feasible;
+- detailed records contain only agent-visible content;
 - stores serialize and deserialize exactly;
-- cognitions cannot reference missing facts;
-- decision traces cannot reference missing memories;
-- evaluator-only ground truth cannot enter task-agent prompts;
+- factual memories reference valid detailed facts;
+- cognitions reference valid factual memories;
+- decision traces reference valid loaded memories;
 - control and treatment prompts differ only in intended cognition content;
-- paired runs use matching trajectory suffixes;
-- status transitions are valid.
+- paired runs use matching suffixes;
+- status transitions are valid;
+- the factual layer rejects or flags inferential language where feasible.
 
 ### Integration tests
 
 - mock model completes one memory-aware trajectory;
-- deterministic fact extraction works on a saved trajectory;
-- paired regression writes two branch results and one effect record;
-- reporting can load results without breaking existing LatentGym output.
+- deterministic Number Guessing recording works;
+- compact facts can be retrieved;
+- detailed drill-down returns the correct source record;
+- paired cognition regression produces two branch results and one effect record;
+- reporting can load results without breaking existing output.
 
 ### Failure behavior
 
 - invalid LLM JSON: retry once, then mark generation failure;
-- missing provenance: reject candidate;
-- environment replay mismatch: abort the pair rather than compare non-matching suffixes;
+- missing provenance: reject the summary or cognition;
+- replay mismatch: abort the pair;
 - API failure in one branch: rerun or discard the entire pair;
-- duplicate fact: preserve source but deduplicate presentation to the task agent.
+- duplicate facts: preserve all source references but deduplicate presentation;
+- ambiguous fact: keep the detailed record and mark the summary for drill-down rather than inventing certainty.
 
 ---
 
-## 19. Later RL Extension
+## 20. Later RL Extension
 
-Only begin RL after the agentic pipeline reveals a specific decision bottleneck.
+Only begin RL after the staged agentic experiments reveal a specific bottleneck.
 
-### 19.1 Candidate RL problems
+LatentGym's existing cross-task RL should be reused as infrastructure and as a full-history RL baseline, but it does not by itself define explicit memory actions.
 
-#### A. Cognitive promotion policy
+### 20.1 Candidate RL problem A: factual routing and drill-down
+
+This is a natural first target if factual memory already improves performance.
+
+State:
+
+- current concrete decision;
+- available factual summaries;
+- links to detailed records;
+- contradiction and uncertainty signals;
+- memory/token budget;
+- prior use statistics.
+
+Actions:
+
+- retrieve factual-memory IDs;
+- open a detailed fact;
+- stop retrieving and act.
+
+Reward:
+
+```text
+task reward
+- factual retrieval cost
+- detailed drill-down cost
+- memory-induced harm
+```
+
+This trains when to rely on summaries and when to inspect evidence.
+
+### 20.2 Candidate RL problem B: cognition applicability
+
+State:
+
+- current decision context;
+- candidate cognition and tested scope;
+- supporting and counterevidence facts;
+- optional detailed records;
+- memory budget.
+
+Actions:
+
+- use cognition;
+- ignore cognition;
+- open supporting detailed facts;
+- revise scope;
+- mark stale.
+
+Reward:
+
+- downstream task reward;
+- minus harm caused by incorrect transfer;
+- minus retrieval and drill-down cost.
+
+### 20.3 Candidate RL problem C: cognitive promotion
 
 State:
 
 - candidate cognition;
 - supporting and counterevidence facts;
+- prior regression outcomes;
 - current scope;
-- prior validation outcomes;
-- remaining test budget.
+- remaining validation budget.
 
-Action:
+Actions:
 
-- validate now;
+- test now;
 - keep tentative;
 - promote within scope;
 - revise scope;
@@ -990,113 +1339,93 @@ Action:
 
 Reward:
 
-- downstream suffix reward improvement;
+- paired downstream improvement;
 - minus cognition-induced harm;
-- minus validation cost;
-- minus memory size and retrieval cost.
+- minus validation cost and memory cost.
 
-#### B. Retrieval policy
-
-State:
-
-- current concrete decision;
-- cognitive and episodic stores;
-- memory budget;
-- prior use statistics.
-
-Action:
-
-- choose cognition IDs and fact IDs to load.
-
-Reward:
-
-- downstream task reward;
-- minus token/retrieval cost;
-- minus severe harm from toxic or stale memory.
-
-#### C. Experiment-selection policy
+### 20.4 Candidate RL problem D: regression-test selection
 
 State:
 
 - unvalidated cognitions;
 - uncertainty and potential impact;
-- available regression tasks;
+- available positive, boundary, drift, and corruption tests;
 - remaining test budget.
 
-Action:
+Actions:
 
-- select which cognition to test;
-- select positive, boundary, drift, or corruption test;
+- select cognition to test;
+- select test type;
 - stop testing.
 
 Reward:
 
-- information gained about cognition utility;
+- information gained about utility and scope;
 - future downstream reward;
 - minus test cost.
 
-### 19.2 Recommended first RL target
+### 20.5 Selecting the first RL target
 
-The safest first target is **promotion / rejection of already generated candidate cognitions**, not free-form memory generation.
+Use experimental evidence:
 
-Reasons:
+- if compact facts help but retrieval/drill-down is inefficient, train factual routing;
+- if correct cognition helps but context transfer is unsafe, train applicability checking;
+- if candidate quality is adequate but promotion is unreliable, train promotion/rejection;
+- if validation is too expensive, train experiment selection.
 
-- discrete and auditable action space;
-- candidate content stays fixed;
-- effect labels are available from regression tests;
-- easier credit assignment;
-- easier comparison with rule-based promotion.
+Do not jointly train task policy, retrieval, summarization, cognition generation, and validation in the first RL experiment.
 
-### 19.3 Offline data generated by the agentic phase
+### 20.6 Offline data from the agentic phase
 
-Each record can contain:
+Records may include:
 
 ```text
-episodic facts
+current decision
+retrieved factual summaries
+opened detailed facts
 candidate cognition
-scope
-control rollout
-cognition-enabled rollout
+supporting and contradictory evidence
+with/without cognition rollouts
 paired effect
 harm tags
-final status
+applicability decision
+final memory status
 ```
 
-Use this dataset for:
+Use these data for:
 
-- supervised classification or ranking;
+- supervised routing or ranking;
 - value-model training;
 - offline policy learning;
 - warm-starting sequence-level RL.
 
-### 19.4 Online sequence-level RL
+### 20.7 Online sequence-level RL
 
-Later, integrate with LatentGym's existing full-sequence RL stack.
-
-Possible memory action format at episode boundaries:
+Possible explicit actions at decision or episode boundaries:
 
 ```text
 <MEMORY_ACTION>
-PROMOTE h1
-REVISE_SCOPE h2 current_session_only
-REJECT h3
-RETRIEVE h1
+RETRIEVE_FACT f12
+OPEN_DETAILED_FACT df7
+USE_COGNITION h1
+IGNORE_COGNITION h2
+REVISE_SCOPE h3 current_session_only
 </MEMORY_ACTION>
 ```
 
-Do not train the task model and every memory component jointly in the first RL experiment. Freeze the task agent or use a small adapter/router so changes are attributable.
+Prefer freezing the task agent or training a small router/adapter so improvements are attributable to memory policy.
 
 ---
 
-## 20. Later Differentiable-Memory Extension
+## 21. Later Differentiable-Memory Extension
 
-Keep the environment, evaluation, scope, provenance, and paired-testing concepts independent of the memory representation.
+Keep the environment, evaluation protocol, provenance, and staged factual/cognitive distinction independent of memory representation.
 
 Possible backends:
 
-1. natural-language fact and cognition stores;
+1. natural-language detailed facts, facts, and cognition;
 2. structured symbolic memory;
-3. soft-prompt memory vectors;
+3. soft-prompt vectors;
 4. prefix key/value memory;
 5. cross-attention memory bank;
 6. learned differentiable consolidation.
@@ -1106,22 +1435,22 @@ Abstract interface:
 ```python
 class MemoryBackend(Protocol):
     def observe(self, trajectory_fragment: Any) -> None: ...
-    def consolidate(self) -> list[Any]: ...
+    def summarize_facts(self) -> list[Any]: ...
     def retrieve(self, decision_context: Any, budget: int) -> Any: ...
+    def open_detail(self, memory_id: str) -> Any: ...
+    def consolidate(self) -> list[Any]: ...
     def update_from_outcome(self, decision_trace: Any) -> None: ...
     def snapshot(self) -> Any: ...
     def restore(self, snapshot: Any) -> None: ...
 ```
 
-The first implementation should return text, but downstream runner code should not assume memory must always be natural language.
+The first implementation returns text, but runner code should not assume memory must always be natural language.
 
 ---
 
-## 21. Commands to Run First
+## 22. Commands to Run First
 
-After cloning and following the repository's current setup guide, begin with repository-provided commands rather than inventing new ones.
-
-Suggested sequence:
+After cloning and following the repository's current setup guide, use repository-provided commands.
 
 ```bash
 # Read current instructions first
@@ -1132,14 +1461,14 @@ sed -n '1,260p' latentgym/envs/number_guessing/README.md
 # List number-guessing latents
 python -m latentgym.cli.generate_data list --env number_guessing
 
-# Preview or generate a very small evaluation set
+# Generate a very small evaluation set
 python -m latentgym.cli.generate_data eval \
   --env number_guessing \
   --n-trajectories 3 \
   --num-episodes 5 \
   --output latentgym/data/eval/
 
-# Run a no-cost mock sanity check; confirm the exact model-spec syntax in current docs
+# Run a no-cost mock sanity check; confirm current model-spec syntax in docs
 python -m latentgym.cli.run_eval single \
   --models mock:random \
   --env number_guessing \
@@ -1155,13 +1484,13 @@ python -m latentgym.cli.report \
   --output latentgym/results/memory_sanity/report/
 ```
 
-Exact latent, prompt, and feedback IDs must be confirmed from the current Number Guessing documentation or registry before committing experiment configs.
+Confirm exact latent, prompt, and feedback IDs from the cloned repository before committing experiment configs.
 
 ---
 
-## 22. First Cursor Task
+## 23. First Cursor Tasks
 
-Give Cursor this narrowly scoped task before asking it to implement the full system:
+### Task 1: inspect without editing
 
 ```text
 Read AGENTIC_MEMORY_PLAN.md and the LatentGym files listed in Section 0.
@@ -1174,43 +1503,92 @@ Produce a repository-specific implementation note that answers:
 4. Which fields are agent-visible, and which are evaluator-only ground truth?
 5. What is the safest way to replay or fork a trajectory prefix?
 6. Which existing result dataclasses can be extended without breaking reporting?
-7. What minimal new files should be added for Phase 1?
+7. What minimal new files are needed for Phase 1?
 
-Cite file paths and line ranges from the local repository.
-Do not propose RL or edit the task environment.
+Cite local file paths and line ranges.
+Do not propose RL, cognition generation, or task-environment changes.
 ```
 
-After reviewing that note, ask Cursor to implement Phase 1 only.
+### Task 2: implement Phase 1 only
+
+After reviewing Task 1:
+
+```text
+Implement only the detailed factual record and compact factual memory pipeline for Number Guessing.
+
+Requirements:
+- use agent-visible transcript content only;
+- deterministic extraction and summarization;
+- append-only JSON/JSONL storage;
+- complete detailed-to-summary provenance;
+- no cognitive memory;
+- no RL;
+- no learned retriever;
+- preserve existing LatentGym results and add optional memory metadata;
+- add tests for leakage, provenance, serialization, and factual-language constraints.
+```
 
 ---
 
-## 23. Success Criteria for the Agentic MVP
+## 24. Success Criteria
 
-The MVP succeeds if it can demonstrate all of the following:
+### Stage A factual-memory MVP
 
-1. Verified episodic facts can replace part of the raw interaction history without hidden-information leakage.
-2. A candidate cognition can be injected while holding episodic evidence fixed.
-3. A paired regression controller can estimate the cognition's downstream effect.
-4. A useful cognition and a toxic cognition produce detectably different outcomes.
-5. Every cognition and decision has a complete provenance chain.
-6. Scope revision handles partial validity better than global accept/reject.
-7. The system reveals a concrete bottleneck suitable for later RL.
+The first MVP succeeds if:
 
-The MVP does **not** need to prove that all memory should be agentic, that Number Guessing transfers directly to coding agents, or that end-to-end differentiable memory is unnecessary.
+1. detailed factual records preserve agent-visible evidence;
+2. compact factual memories are traceable to detailed records;
+3. factual memory can replace raw history in a controlled condition;
+4. the task agent can selectively open detailed records;
+5. performance, token cost, and harm can be compared against no memory and full history;
+6. failures can be assigned to recording, summarization, retrieval, drill-down, or utilization.
+
+The factual MVP does **not** require cognitive memory, regression testing of cognition, or RL.
+
+### Stage B cognitive extension
+
+The cognitive extension succeeds if:
+
+1. candidate cognition is grounded in valid factual memories;
+2. paired regression estimates its downstream contribution while holding facts fixed;
+3. cognition-only and facts-plus-cognition can be compared;
+4. the agent can reject a previously validated cognition when current facts conflict;
+5. detailed evidence can resolve ambiguity;
+6. cognition status and scope can be revised without losing provenance;
+7. the system reveals a narrow bottleneck suitable for later RL.
+
+The project does not need to prove that Number Guessing transfers directly to coding agents or that differentiable memory is unnecessary.
 
 ---
 
-## 24. Open Design Questions to Resolve Empirically
+## 25. Open Design Questions
 
-- Is the first meaningful retrieval point episode start or immediately before the first guess?
-- Does compact episodic memory already match full history?
-- Does explicit action implication help the task agent use cognition?
+### Factual memory
+
+- Does compact factual memory improve over no memory?
+- Can it match full history at lower token cost?
+- Which factual granularity is useful: episode outcome, full action sequence, or both?
+- When does a compact summary become too ambiguous?
+- Can the task agent reliably decide when to open a detailed record?
+- Is first-decision retrieval sufficient, or are later decision points necessary?
+- How should conflicting factual summaries be presented?
+- Does hierarchical factual memory help under latent drift?
+
+### Cognitive memory
+
+- Does cognition add value once the agent already has facts?
+- Is cognition-only more brittle than facts plus cognition?
 - How many supporting facts are enough to generate a candidate?
-- Should a cognition be tested on the same latent only, held-out latents, or both?
-- What harm threshold is acceptable?
-- Should contradictory external evidence shrink scope, lower confidence, or create a sibling cognition?
-- Can the task agent reliably report which memory it used, or is behavioral attribution needed?
+- How should tested scope be represented?
 - Does regression validation overfit to the test suite?
-- Which component becomes the true bottleneck: generation, validation, retrieval, or utilization?
+- What should happen when current facts contradict a validated cognition?
+- Can the task agent report which memory it used, or is behavioral attribution required?
 
-These questions are outputs of the first experiment, not assumptions to settle in advance.
+### RL
+
+- Is the first meaningful learned action retrieval, drill-down, applicability checking, promotion, or test selection?
+- Can the task agent remain frozen while a small memory router is trained?
+- Should reward use absolute downstream performance or paired memory contribution?
+- How should retrieval and detailed-evidence costs be priced?
+
+These questions are outputs of the staged experiments, not assumptions to settle in advance.
