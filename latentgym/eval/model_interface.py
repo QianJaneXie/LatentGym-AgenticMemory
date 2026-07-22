@@ -211,6 +211,7 @@ class OpenAIModel(ModelInterface):
         self._client = None
         # Auto-detect OpenRouter for reasoning extraction
         self._is_openrouter = bool(base_url and "openrouter" in base_url)
+        self._is_llmcenter = bool(base_url and "llm-center" in base_url)
 
     def _get_client(self):
         if self._client is None:
@@ -223,6 +224,15 @@ class OpenAIModel(ModelInterface):
             self._client = AsyncOpenAI(**kwargs)
         return self._client
 
+    @staticmethod
+    def _ensure_user_message(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Some OpenAI-compatible backends require at least one user turn."""
+        if any(m.get("role") == "user" for m in messages):
+            return messages
+        fixed = list(messages)
+        fixed.append({"role": "user", "content": "Please respond with your next action."})
+        return fixed
+
     async def generate(self, messages: List[Dict[str, str]], **kwargs) -> ModelResponse:
         try:
             client = self._get_client()
@@ -230,8 +240,15 @@ class OpenAIModel(ModelInterface):
             raise ImportError("openai is required. Install with: pip install openai")
 
         is_openrouter = self._is_openrouter
+        call_messages = (
+            self._ensure_user_message(messages) if self._is_llmcenter else messages
+        )
 
         async def _call():
+            # Mild client-side pacing for shared free-tier LLMCenter endpoints.
+            if self._is_llmcenter:
+                await asyncio.sleep(0.4)
+
             extra_params = {}
             # OpenRouter: request reasoning tokens via extra_body
             # Docs: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
@@ -270,7 +287,7 @@ class OpenAIModel(ModelInterface):
 
             response = await client.chat.completions.create(
                 model=self.model,
-                messages=messages,
+                messages=call_messages,
                 temperature=kwargs.get("temperature", self.temperature),
                 max_tokens=kwargs.get("max_tokens", self.max_tokens),
                 **extra_params,
@@ -314,6 +331,9 @@ class AnthropicModel(ModelInterface):
     - thinking_budget controls max tokens for thinking (default 10000).
     - When thinking is enabled, temperature is forced to 1 (Anthropic requirement).
     - Thinking blocks are extracted separately and NOT fed back into conversation.
+
+    Also works with Anthropic-compatible gateways (e.g. LLMCenter `/llm/v1/messages`)
+    by setting base_url (SDK appends `/v1/messages`).
     """
 
     def __init__(
@@ -321,6 +341,7 @@ class AnthropicModel(ModelInterface):
         name: str,
         model: str = "claude-sonnet-4-20250514",
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
         max_retries: int = 3,
@@ -331,6 +352,7 @@ class AnthropicModel(ModelInterface):
         super().__init__(name)
         self.model = model
         self.api_key = api_key
+        self.base_url = base_url
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
@@ -338,11 +360,15 @@ class AnthropicModel(ModelInterface):
         self.enable_thinking = enable_thinking
         self.thinking_budget = thinking_budget
         self._client = None
+        self._is_llmcenter = bool(base_url and "llm-center" in base_url)
 
     def _get_client(self):
         if self._client is None:
             from anthropic import AsyncAnthropic
-            self._client = AsyncAnthropic(api_key=self.api_key)
+            kwargs = {"api_key": self.api_key}
+            if self.base_url:
+                kwargs["base_url"] = self.base_url
+            self._client = AsyncAnthropic(**kwargs)
         return self._client
 
     async def generate(self, messages: List[Dict[str, str]], **kwargs) -> ModelResponse:
@@ -358,17 +384,26 @@ class AnthropicModel(ModelInterface):
                 system_msg = msg["content"]
             else:
                 chat_messages.append(msg)
+        # Anthropic-compatible backends often require at least one user turn.
+        if not any(m.get("role") == "user" for m in chat_messages):
+            chat_messages.append(
+                {"role": "user", "content": "Please respond with your next action."}
+            )
 
         enable_thinking = self.enable_thinking
         thinking_budget = self.thinking_budget
 
         async def _call():
+            if self._is_llmcenter:
+                await asyncio.sleep(0.4)
+
             create_params = dict(
                 model=self.model,
-                system=system_msg if system_msg else "",
                 messages=chat_messages,
                 max_tokens=kwargs.get("max_tokens", self.max_tokens),
             )
+            if system_msg:
+                create_params["system"] = system_msg
             if enable_thinking:
                 # Extended thinking: temperature must be 1 (Anthropic requirement)
                 create_params["thinking"] = {

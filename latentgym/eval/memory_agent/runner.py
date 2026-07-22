@@ -98,10 +98,14 @@ class MemoryAPIRunner:
         # First-decision bookkeeping for DecisionTrace completion
         open_first_decision: Optional[Dict[str, Any]] = None
 
+        # Always put episode-0 content in a user message. Some gateways (e.g.
+        # MiniCPM via LLMCenter/vLLM) reject conversations that are system-only
+        # ("No user query found in messages"). full_history still accumulates
+        # across episodes; only the init packaging changes.
+        conversation = [{"role": "system", "content": rules}]
+        ep0_user = ep0_tail or "Begin episode 1."
+        conversation.append({"role": "user", "content": ep0_user})
         if self.condition in ("no_memory", "episodic_only"):
-            conversation = [{"role": "system", "content": rules}]
-            ep0_user = ep0_tail or "Begin episode 1."
-            conversation.append({"role": "user", "content": ep0_user})
             open_first_decision = self._maybe_inject_memory(
                 conversation,
                 store=store,
@@ -111,7 +115,6 @@ class MemoryAPIRunner:
                 pending_first_decision=True,
             )
         else:
-            # full_history: keep init conversation; record empty retrieval intent.
             self._log_retrieval_only(
                 store=store,
                 decision_logger=decision_logger,

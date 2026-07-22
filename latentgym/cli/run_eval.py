@@ -56,6 +56,12 @@ def _parse_model_spec(spec: str):
         openrouter/google:gemini-pro     → OpenRouter
         openrouter:any/model-name        → OpenRouter (pass-through model ID)
 
+    Via LLMCenter (modelbest internal gateway; needs LLMCenter_API_KEY):
+        llmcenter:minicpm-v-4.6                 → OpenAI-compatible /chat/completions
+        llmcenter:gpt-5.6-sol                   → same
+        llmcenter-anthropic:claude-fable-5      → Anthropic-compatible /messages
+        llmcenter:claude-fable-5                → same (auto-routed to Anthropic path)
+
     Local / testing:
         vllm:http://localhost:8000       → Local vLLM server
         mock:random                      → Deterministic mock (no API needed)
@@ -64,6 +70,14 @@ def _parse_model_spec(spec: str):
         OpenAIModel, AnthropicModel, GoogleModel, VLLMModel, MockModel,
     )
     import os
+
+    def _llmcenter_api_key() -> str:
+        api_key = os.environ.get("LLMCenter_API_KEY") or os.environ.get("LLMCENTER_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "llmcenter: models require LLMCenter_API_KEY in the environment / .env"
+            )
+        return api_key
 
     if spec.startswith("mock:"):
         return MockModel(name=spec)
@@ -88,6 +102,57 @@ def _parse_model_spec(spec: str):
             api_key=os.environ.get("OPENROUTER_API_KEY"),
         )
 
+    # LLMCenter Anthropic-compatible Messages API
+    # SDK base_url should be .../llm  (client calls .../llm/v1/messages)
+    if spec.startswith("llmcenter-anthropic:"):
+        model_name = spec[len("llmcenter-anthropic:"):]
+        anthropic_base = (
+            os.environ.get("LLMCenter_ANTHROPIC_BASE_URL")
+            or os.environ.get("LLMCENTER_ANTHROPIC_BASE_URL")
+            or "https://llm-center.modelbest.cn/llm"
+        )
+        return AnthropicModel(
+            name=spec,
+            model=model_name,
+            api_key=_llmcenter_api_key(),
+            base_url=anthropic_base,
+            request_timeout=float(os.environ.get("LLMCenter_REQUEST_TIMEOUT", "300")),
+            max_retries=int(os.environ.get("LLMCenter_MAX_RETRIES", "4")),
+        )
+
+    # LLMCenter OpenAI-compatible chat completions
+    if spec.startswith("llmcenter:"):
+        model_name = spec[len("llmcenter:"):]
+        # Claude / Fable models on LLMCenter use the Anthropic Messages path.
+        if model_name.startswith("claude-") or "fable" in model_name.lower():
+            anthropic_base = (
+                os.environ.get("LLMCenter_ANTHROPIC_BASE_URL")
+                or os.environ.get("LLMCENTER_ANTHROPIC_BASE_URL")
+                or "https://llm-center.modelbest.cn/llm"
+            )
+            return AnthropicModel(
+                name=spec,
+                model=model_name,
+                api_key=_llmcenter_api_key(),
+                base_url=anthropic_base,
+                request_timeout=float(os.environ.get("LLMCenter_REQUEST_TIMEOUT", "300")),
+                max_retries=int(os.environ.get("LLMCenter_MAX_RETRIES", "4")),
+            )
+        base_url = (
+            os.environ.get("LLMCenter_BASE_URL")
+            or os.environ.get("LLMCENTER_BASE_URL")
+            or "https://llm-center.modelbest.cn/llm/v1"
+        )
+        return OpenAIModel(
+            name=spec,
+            model=model_name,
+            base_url=base_url,
+            api_key=_llmcenter_api_key(),
+            # Kimi / long-thinking routes on LLMCenter can exceed the default 120s.
+            request_timeout=float(os.environ.get("LLMCenter_REQUEST_TIMEOUT", "300")),
+            max_retries=int(os.environ.get("LLMCenter_MAX_RETRIES", "4")),
+        )
+
     # Direct API access
     if spec.startswith("openai:"):
         model_name = spec[len("openai:"):]
@@ -105,6 +170,7 @@ def _parse_model_spec(spec: str):
         f"Unknown model spec: '{spec}'. Expected format: provider:model_name\n"
         f"  Direct:     openai:gpt-4o, anthropic:claude-sonnet-4-6, google:gemini-pro\n"
         f"  OpenRouter: openrouter/openai:gpt-4o, openrouter/google:gemini-pro\n"
+        f"  LLMCenter:  llmcenter:gpt-5.6-sol, llmcenter:claude-fable-5\n"
         f"  Local:      vllm:http://localhost:8000\n"
         f"  Testing:    mock:random"
     )
