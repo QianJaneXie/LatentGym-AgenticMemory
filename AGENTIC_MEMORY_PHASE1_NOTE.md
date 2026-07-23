@@ -102,11 +102,6 @@ Dir: `latentgym/results/memory_phase1_gpt56_setof2_info/` — plumbing only; too
 
 ## Next → Pilot 2
 
-See plan §8.2 Pilot 2:
+Pilot 2 is underway in `AGENTIC_MEMORY_PHASE2_NOTE.md`.
 
-1. atomic flat facts (read-all) — representation ablation, not Mem0  
-2. provenance-grounded event facts — already covered by `episodic_only`  
-3. Hermes-style skill / lesson only  
-4. facts plus the same skill  
-
-Mem0 / top-k retrieval remain deferred.
+Pilot 2 now includes both **proxy template** skills and **LLM-distilled** skills (`skill_only_llm` / `facts_plus_skill_llm`). See `AGENTIC_MEMORY_PHASE2_NOTE.md`. Atomic flat facts remain deferred. Mem0 / top-k remain deferred.

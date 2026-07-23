@@ -1,40 +1,50 @@
 # Agentic Memory — Phase / Pilot 2 Note
 
-**Status:** core Pilot 2 conditions run on `traj_000`  
+**Status:** proxy skill done; LLM-distilled Hermes-pattern skill added  
 **Depends on:** Pilot 1 complete (`AGENTIC_MEMORY_PHASE1_NOTE.md`)  
-**Focus latent:** `range_100`, 7 episodes, GPT-5.6, read-all
+**Focus latent:** `range_100`, 7 episodes, GPT-5.6, one trajectory (`traj_000`)
 
 ---
 
-## Goal (plan §8.2 Pilot 2)
+## Hermes-style skill: two adaptations
 
-Compare factual representations and experience / skill paradigms:
-
-| Item | Condition | Status |
+| Condition | Who writes the skill | Meaning |
 |---|---|---|
-| Provenance-grounded event facts | `episodic_only` | Done in Pilot 1 |
-| Hermes-style skill only | `skill_only` | Done (`traj_000`) |
-| Facts plus the same skill | `facts_plus_skill` | Done (`traj_000`) |
-| Atomic flat LLM-extracted facts | TBD | Deferred (needs extractor); not labeled Mem0 |
+| `skill_only` / `facts_plus_skill` | Experimenter **template** | Proxy pattern only |
+| `skill_only_llm` / `facts_plus_skill_llm` | **Same task LLM** distills a lesson after each episode from agent-visible outcomes | Closer Hermes adaptation |
 
-This is a **LatentGym adaptation** of the Hermes skill pattern (procedural lesson without / with supporting facts), not a full Hermes Agent integration.
+Neither is a full Hermes Agent integration. Neither is toxic cognition.
 
----
-
-## Skill format
-
-Deterministic template from agent-visible revealed targets only, e.g.:
+LLM distillation flow:
 
 ```text
-Experience / skill note (...):
-- Previously revealed targets: [658, 669, ...]
-- Observed span so far: [658, 749]
-- Suggested procedure: try near min/max of revealed targets, then search inside that span...
+episode ends
+  -> extract visible outcome facts
+  -> separate generate() call: "write a short reusable skill from these outcomes"
+  -> store distilled skill text
+  -> next episode: inject skill only, or dense facts + skill
 ```
+
+`facts_plus_skill*` uses the **same dense facts as `episodic_only`**.
 
 ---
 
-## How to run
+## Why atomic flat facts is lower priority right now
+
+Atomic flat facts = another LLM extracts short unstructured notes from the transcript (representation ablation, **not** Mem0).
+
+Deferred because:
+
+1. Pilot 1 already compared outcome-only vs dense context–action–outcome vs oracle — that answers “what factual body helps” without a second extractor.
+2. On `range_100`, dense facts already ≈ full history; a flatter LLM extract is unlikely to change the main story before skill/cognition questions.
+3. It adds API cost and another failure mode (bad extraction) without addressing Hermes-style experience vs facts.
+4. Mem0 (query retrieval) remains separately deferred until scale matters.
+
+Revisit atomic flat facts only if we need a representation ablation against Mem0-like extraction, or dense facts become too noisy.
+
+---
+
+## How to run LLM-distilled skills
 
 ```bash
 python experiments/memory/run_baselines.py \
@@ -44,26 +54,27 @@ python experiments/memory/run_baselines.py \
   --n-trajectories 1 --num-episodes 7 \
   --trajectory-dir latentgym/data/eval/ \
   --output latentgym/results/memory_phase1_gpt56_range100_standard/ \
-  --conditions skill_only facts_plus_skill \
+  --conditions skill_only_llm facts_plus_skill_llm \
   --merge-existing
 ```
 
-Compare against Pilot 1 rows in the same `baselines_summary.json`, especially `episodic_only` and `no_memory`.
-
 ---
 
-## Results (`range_100`, `traj_000`, merged into Pilot 1 summary)
+## Results (`range_100`, `traj_000`)
 
-Dir: `latentgym/results/memory_phase1_gpt56_range100_standard/baselines_summary.json`
+### Proxy template (earlier)
 
 | Condition | reward | turns |
 |---|---|---|
-| no_memory | 5.700 | `[9, 10, 10, 8, 10, 8, 10]` |
-| full_history | 6.120 | `[9, 8, 6, 7, 5, 4, 5]` |
-| episodic_only | **6.140** | `[9, 8, 6, 6, 5, 4, 5]` |
 | skill_only | 6.080 | `[9, 8, 7, 3, 5, 7, 7]` |
 | facts_plus_skill | 6.060 | `[9, 8, 7, 7, 5, 6, 5]` |
+| episodic_only (ref) | **6.140** | `[9, 8, 6, 6, 5, 4, 5]` |
 
-On this single seed, the procedural skill alone helps vs no memory but does **not** beat dense factual memory; adding the skill on top of facts also does not improve over `episodic_only`. Treat as suggestive only.
+### LLM-distilled
 
-Still deferred: atomic LLM flat-fact extraction; faithful Mem0.
+| Condition | reward | turns |
+|---|---|---|
+| skill_only_llm | 5.880 | `[9, 8, 6, 9, 9, 10, 5]` |
+| facts_plus_skill_llm | 6.040 | `[9, 8, 6, 6, 6, 7, 6]` |
+
+On this single seed, LLM-distilled skill **alone** is weaker than the proxy template and far below dense facts (`episodic_only` 6.14). Facts + LLM skill also does not beat dense facts alone. Distilled texts live in `memory.distilled_skill_history`.

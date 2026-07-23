@@ -1055,6 +1055,14 @@ The goal is not to reimplement every external memory system end to end. For Late
 
 The Hermes labels refer to the system pattern of persistent memory plus skills and an experience-driven learning loop, not necessarily a full reproduction of every Hermes Agent subsystem.
 
+**How Hermes-style skills are produced (important):**
+
+- In the real Hermes Agent product, skills are primarily **agent-distilled**: after tasks, the agent writes or revises procedural `SKILL.md`-like artifacts (humans may also author or approve skills).
+- In LatentGym Pilot 2, prefer the same *information pattern* (skill without facts vs facts plus skill) under a transparent adaptation:
+  1. **Proxy skill (optional first step):** a deterministic, experimenter-written template filled only from agent-visible outcomes — useful for plumbing and a lower bound, but **not** Hermes distillation.
+  2. **Closer Hermes adaptation:** after each episode or prefix, prompt an LLM to write a short lesson / skill from the agent-visible transcript or outcomes, then inject that text alone (`skill_only`) or with facts (`facts_plus_skill`).
+- Do not report a deterministic template skill as “Hermes Agent” or as evidence about Hermes’s autonomous learning loop. Label results as `skill_only` / `facts_plus_skill` under a LatentGym Hermes-pattern adaptation, and state whether the skill text was templated or LLM-distilled.
+
 The early atomic-fact baseline is deliberately framework-independent. A **faithful Mem0 system baseline** is deferred until retrieval scale becomes relevant. That later baseline should preserve Mem0's own extraction and query-based top-k or hybrid retrieval behavior, rather than stripping away the features that distinguish the system.
 
 Mem0 should be treated primarily as an **interaction-memory baseline**:

@@ -32,6 +32,8 @@ PILOT1_CONDITIONS = (
 PILOT2_CONDITIONS = (
     "skill_only",
     "facts_plus_skill",
+    "skill_only_llm",
+    "facts_plus_skill_llm",
 )
 
 

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from latentgym.memory.fact_extractor import VisibleTurn, extract_number_guessing_facts
 from latentgym.memory.retriever import (
+    build_skill_distillation_prompt,
     format_oracle_summary_from_facts,
     format_skill_from_facts,
     select_outcome_only_facts,
+    wrap_distilled_skill,
 )
 
 
@@ -58,3 +60,14 @@ def test_skill_note_is_procedural_not_latent_dump():
     assert "658" in text and "669" in text
     assert "set_values" not in text
     assert "range_start" not in text
+
+
+def test_skill_distillation_prompt_uses_outcomes_only():
+    facts = _facts_two_episodes()
+    prompt = build_skill_distillation_prompt(facts)
+    assert "Verified episode outcomes" in prompt
+    assert "669" in prompt and "658" in prompt
+    assert "set_values" not in prompt
+    wrapped = wrap_distilled_skill("- Prefer searching near previously revealed targets.")
+    assert "LLM-distilled" in wrapped
+    assert "Prefer searching" in wrapped

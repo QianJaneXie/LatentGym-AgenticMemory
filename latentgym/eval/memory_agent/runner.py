@@ -7,8 +7,10 @@ Pilot 1 conditions without cognition:
   - episodic_only: clear raw history; inject all prior facts (dense context-action-outcome)
   - outcome_only: clear raw history; inject episode-outcome facts only
   - oracle_summary: clear raw history; inject compact restatement of visible outcomes
-  - skill_only: clear raw history; inject Hermes-style procedural lesson only
-  - facts_plus_skill: clear raw history; inject dense facts plus the same lesson
+  - skill_only: clear raw history; inject proxy (template) skill only
+  - facts_plus_skill: clear raw history; inject dense facts plus proxy skill
+  - skill_only_llm: clear raw history; inject LLM-distilled skill only
+  - facts_plus_skill_llm: clear raw history; inject dense facts plus LLM-distilled skill
 """
 from __future__ import annotations
 
@@ -27,11 +29,13 @@ from latentgym.memory.fact_extractor import (
     split_boundary_user_message,
 )
 from latentgym.memory.retriever import (
+    build_skill_distillation_prompt,
     format_facts_for_prompt,
     format_oracle_summary_from_facts,
     format_skill_from_facts,
     retrieve_episodic_facts,
     select_outcome_only_facts,
+    wrap_distilled_skill,
 )
 from latentgym.memory.types import DecisionTrace
 
@@ -45,6 +49,8 @@ MemoryCondition = Literal[
     "oracle_summary",
     "skill_only",
     "facts_plus_skill",
+    "skill_only_llm",
+    "facts_plus_skill_llm",
 ]
 _COMPACTED_CONDITIONS = (
     "no_memory",
@@ -53,6 +59,8 @@ _COMPACTED_CONDITIONS = (
     "oracle_summary",
     "skill_only",
     "facts_plus_skill",
+    "skill_only_llm",
+    "facts_plus_skill_llm",
 )
 _FACT_INJECT_CONDITIONS = (
     "episodic_only",
@@ -60,7 +68,10 @@ _FACT_INJECT_CONDITIONS = (
     "oracle_summary",
     "skill_only",
     "facts_plus_skill",
+    "skill_only_llm",
+    "facts_plus_skill_llm",
 )
+_LLM_SKILL_CONDITIONS = ("skill_only_llm", "facts_plus_skill_llm")
 
 def _split_init_system(content: str) -> tuple[str, str]:
     """Split init system message into stable rules vs episode-1 header/obs."""
@@ -102,6 +113,8 @@ class MemoryAPIRunner:
             "oracle_summary",
             "skill_only",
             "facts_plus_skill",
+            "skill_only_llm",
+            "facts_plus_skill_llm",
         ):
             raise ValueError(f"Unknown memory condition: {condition}")
         self.model = model
@@ -121,6 +134,8 @@ class MemoryAPIRunner:
         traj_id = trajectory_id or f"traj_{seed:04d}"
         store = EpisodicStore()
         decision_logger = DecisionLogger()
+        distilled_skill = ""
+        distilled_skill_history: List[Dict[str, Any]] = []
 
         conversation, init_metadata = env.init([])
         # Evaluator-only: keep for TrajectoryResult / EpisodeOutcome, never inject.
@@ -155,6 +170,7 @@ class MemoryAPIRunner:
                 trajectory_id=traj_id,
                 episode_idx=0,
                 pending_first_decision=True,
+                distilled_skill=distilled_skill,
             )
         else:
             self._log_retrieval_only(
@@ -259,6 +275,19 @@ class MemoryAPIRunner:
                 decision_logger.update_known_facts(store.fact_ids())
                 pending_turns = []
 
+                if self.condition in _LLM_SKILL_CONDITIONS:
+                    distilled_skill = await self._distill_skill_from_store(
+                        store=store,
+                        trajectory_id=traj_id,
+                        episode_idx=completed_ep,
+                    )
+                    distilled_skill_history.append(
+                        {
+                            "after_episode_idx": completed_ep,
+                            "skill_text": distilled_skill,
+                        }
+                    )
+
                 while len(episode_outcomes) < len(ep_rewards):
                     idx = len(episode_outcomes)
                     ep_reward = ep_rewards[idx]
@@ -302,6 +331,7 @@ class MemoryAPIRunner:
                         trajectory_id=traj_id,
                         episode_idx=current_episode,
                         pending_first_decision=True,
+                        distilled_skill=distilled_skill,
                     )
                 elif not done and self.condition == "full_history":
                     open_first_decision = {
@@ -359,10 +389,40 @@ class MemoryAPIRunner:
                     "decisions": decision_logger.to_list(),
                     "n_facts": len(store),
                     "n_decisions": len(decision_logger.all_traces()),
+                    "distilled_skill": distilled_skill,
+                    "distilled_skill_history": distilled_skill_history,
                 }
             },
         )
         return result
+
+    async def _distill_skill_from_store(
+        self,
+        *,
+        store: EpisodicStore,
+        trajectory_id: str,
+        episode_idx: int,
+    ) -> str:
+        """Ask the task model to write a short skill from agent-visible outcomes only."""
+        prior_facts = [
+            f
+            for f in store.all_facts()
+            if f.trajectory_id == trajectory_id and f.episode_idx <= episode_idx
+        ]
+        prompt = build_skill_distillation_prompt(prior_facts)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You distill short reusable skills from verified game outcomes. "
+                    "Never invent hidden latents or evaluator-only information."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+        _assert_no_ground_truth_leakage(messages)
+        response = await self.model.generate(messages)
+        return wrap_distilled_skill(response.text)
 
     def _log_retrieval_only(
         self,
@@ -392,6 +452,7 @@ class MemoryAPIRunner:
         trajectory_id: str,
         episode_idx: int,
         pending_first_decision: bool,
+        distilled_skill: str = "",
     ) -> Optional[Dict[str, Any]]:
         """Inject memory into the latest user message for compacted fact conditions."""
         decision_logger.update_known_facts(store.fact_ids())
@@ -423,6 +484,13 @@ class MemoryAPIRunner:
             facts_block = format_facts_for_prompt(retrieval.facts)
             skill_block = format_skill_from_facts(retrieval.facts)
             block = "\n\n".join(p for p in (facts_block, skill_block) if p)
+            loaded_ids = list(retrieval.fact_ids)
+        elif self.condition == "skill_only_llm" and distilled_skill:
+            block = distilled_skill
+            loaded_ids = [f.fact_id for f in select_outcome_only_facts(retrieval.facts)]
+        elif self.condition == "facts_plus_skill_llm" and (retrieval.facts or distilled_skill):
+            facts_block = format_facts_for_prompt(retrieval.facts) if retrieval.facts else ""
+            block = "\n\n".join(p for p in (facts_block, distilled_skill) if p)
             loaded_ids = list(retrieval.fact_ids)
 
         if block:

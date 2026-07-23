@@ -108,10 +108,46 @@ def select_outcome_only_facts(facts: Sequence[EpisodicFact]) -> List[EpisodicFac
     ]
 
 
-def format_skill_from_facts(facts: Sequence[EpisodicFact]) -> str:
-    """Hermes-style procedural lesson from agent-visible outcomes (LatentGym adaptation).
+def build_skill_distillation_prompt(facts: Sequence[EpisodicFact]) -> str:
+    """User prompt asking an LLM to distill a short skill from visible outcomes."""
+    outcomes = select_outcome_only_facts(facts)
+    if not outcomes:
+        return (
+            "No verified episode outcomes are available yet.\n"
+            "Write one short reusable skill for number guessing that only uses ordinary "
+            "binary search. Plain text, 2-4 bullet lines. No hidden latents."
+        )
+    lines = [
+        "You are writing a short reusable skill/lesson for a number-guessing agent.",
+        "Use ONLY the verified past episode outcomes below.",
+        "Do not invent hidden latents, set membership, or future targets.",
+        "Do not claim certainty beyond the outcomes.",
+        "Return 3-6 bullet lines of procedural advice for the next game.",
+        "Plain text only. No JSON. No bracketed number guesses.",
+        "",
+        "Verified episode outcomes:",
+    ]
+    for fact in outcomes:
+        lines.append(f"- episode={fact.episode_idx}; {fact.outcome}")
+    return "\n".join(lines)
 
-    Deterministic template for Pilot 2 — not a full Hermes Agent integration and not
+
+def wrap_distilled_skill(skill_body: str) -> str:
+    """Prefix LLM-distilled skill text for injection into the task agent."""
+    body = (skill_body or "").strip()
+    if not body:
+        return ""
+    return (
+        "Experience / skill note (LLM-distilled procedural advice from past visible "
+        "outcomes; fallible; current evidence overrides it):\n"
+        + body
+    )
+
+
+def format_skill_from_facts(facts: Sequence[EpisodicFact]) -> str:
+    """Hermes-pattern proxy: deterministic procedural lesson from visible outcomes.
+
+    Experimenter template for Pilot 2 plumbing — not agent distillation and not
     a cognitive-memory schema with regression status.
     """
     outcomes = select_outcome_only_facts(facts)
