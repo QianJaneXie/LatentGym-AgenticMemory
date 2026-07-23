@@ -44,6 +44,34 @@ LatentGym evaluates whether an agent can improve across a sequence of tasks shar
 
 This project asks whether a more explicit and auditable memory system can replace or improve on raw full-history context.
 
+### Scope: interaction memory rather than Agent Wiki
+
+This project studies memory accumulated from an agent's own interactions:
+observations, actions, environment feedback, outcomes, failures, and later
+inferred cognition.
+
+It is distinct from an **Agent Wiki**, which compiles a relatively stable
+document collection into topic-oriented pages for shared knowledge access.
+Agent Wikis are organized primarily around documents and topics, whereas this
+project is organized around trajectories, decisions, and agent-visible
+evidence.
+
+The two paradigms nevertheless share several useful engineering principles:
+
+- perform expensive structuring work at ingestion time rather than repeating it
+  from scratch for every query;
+- persist derived representations rather than treating every interaction as
+  disposable context;
+- retain provenance links from compact representations back to original
+  evidence;
+- use selective fallback to original evidence when a compiled representation
+  is incomplete, ambiguous, stale, or contradictory.
+
+The target here belongs to the **interaction-memory** side of that distinction.
+Mem0 is therefore relevant as an end-to-end interaction-memory system, not as
+evidence that an Agent Wiki and an agent's personal or trajectory-bound memory
+are the same object.
+
 The staged memory lifecycle is:
 
 ```text
@@ -68,6 +96,34 @@ The core distinction is:
 - **cognitive memory** is a fallible rule, belief, or strategy inferred from facts.
 
 A cognitive rule is a shortcut, not a replacement for evidence. Even a cognition that passed regression tests must remain linked to the facts that justified it, so the agent can reconsider it when the current context differs or when memories conflict.
+
+### Ingestion-time compilation and reversible access to evidence
+
+A compact factual memory is an **ingestion-time compilation** of interaction
+evidence. Like any precompiled knowledge representation, it may omit details
+that later become decision-relevant. Therefore, compact memory must never
+replace its source evidence.
+
+The intended trade-off is:
+
+```text
+cheap, structured default representation
+    + explicit provenance
+    + on-demand access to original visible evidence
+```
+
+This makes provenance serve two purposes:
+
+1. **auditability** — every memory can be checked against what the agent
+   actually observed;
+2. **recovery from lossy compression** — when a summary has dropped a detail
+   needed for the current decision, the system can drill down rather than
+   treating the summary as the complete truth.
+
+An incorrect or stale compact memory can be more harmful than having no compact
+memory at all because its structured form may be treated as authoritative.
+Therefore, the project must measure not only average utility but also ambiguity,
+contradiction, staleness, and memory-induced harm.
 
 ### Two separate validation points
 
@@ -122,6 +178,37 @@ and when should the agent inspect their detailed evidence?
 ```
 
 Storage size may be reported for engineering completeness, but neither disk usage nor permanent deletion should drive the initial objective or reward.
+
+### Cost accounting
+
+Moving work from query time to ingestion time does not eliminate cost. It
+redistributes cost across the memory lifecycle. Report at least three categories
+separately:
+
+1. **Construction cost**
+   - recording;
+   - extraction;
+   - factual summarization;
+   - cognition generation;
+   - token and model-call cost incurred when memory is created.
+
+2. **Maintenance cost**
+   - provenance validation;
+   - duplicate and contradiction detection;
+   - status revision;
+   - rebuilding compact memories or cognition after new evidence;
+   - periodic scans for stale or unsupported content.
+
+3. **Invocation cost**
+   - retrieval and ranking calls;
+   - memory tokens inserted into the task context;
+   - detailed-fact drill-down calls;
+   - latency and task-agent attention consumed at decision time.
+
+This decomposition prevents a misleading conclusion in which a method appears
+cheap only because expensive work has been shifted from decision time to memory
+construction or maintenance. It also exposes unused precomputed memories as
+possible sunk cost without assuming that they should be physically deleted.
 
 ---
 
@@ -970,6 +1057,22 @@ The Hermes labels refer to the system pattern of persistent memory plus skills a
 
 The early atomic-fact baseline is deliberately framework-independent. A **faithful Mem0 system baseline** is deferred until retrieval scale becomes relevant. That later baseline should preserve Mem0's own extraction and query-based top-k or hybrid retrieval behavior, rather than stripping away the features that distinguish the system.
 
+Mem0 should be treated primarily as an **interaction-memory baseline**:
+
+```text
+conversation or trajectory
+    -> agentic extraction of reusable memory
+    -> persistent user- or session-bound memory store
+    -> query-conditioned retrieval
+```
+
+It should not be conflated with an Agent Wiki, whose primary input is a document
+collection and whose organization is topic- or document-centric. The later
+Mem0 comparison is useful because both Mem0 and this project make agent-visible
+interaction history persistent; the research difference should be isolated in
+representation, provenance, drill-down, hierarchy, and retrieval behavior
+rather than asserted from terminology alone.
+
 Official project references:
 
 - [Hermes Agent documentation](https://hermes-agent.nousresearch.com/docs/)
@@ -1049,7 +1152,7 @@ Only after these pilots should the project add cognitive-memory formation and RL
 - When LLM extraction is required, use the same extractor model and comparable prompt/output limits where possible; log the exact prompt version.
 - In the first small-memory pilot, allow read-all memory and report token cost. Do not prematurely force a top-k budget.
 - After utility is established, add a matched-context-budget experiment to distinguish better representation from simply providing more tokens.
-- Report memory-construction calls, retrieval calls, context tokens, and task-agent calls separately.
+- Report construction, maintenance, and invocation costs separately. At minimum log memory-construction calls and tokens, provenance or contradiction-maintenance operations, retrieval calls, detailed-fact calls, context tokens, latency when available, and task-agent calls.
 - Use common-prefix paired or multi-branch rollouts whenever possible so that only the memory condition changes.
 - Keep **representation ablations** separate from **policy ablations**. For example, first compare the same fixed facts under different formats before adding learned retrieval.
 - Treat Hermes-style baselines as transparent LatentGym adaptations unless the full external implementation can be integrated without changing the task agent or information available.
@@ -1063,8 +1166,10 @@ Only after these pilots should the project add cognitive-memory formation and RL
 - success rate;
 - mean turns;
 - first-guess accuracy;
-- factual-memory token cost;
-- detailed-fact drill-down count and token cost;
+- factual-memory construction calls and token cost;
+- provenance-validation and contradiction-maintenance cost;
+- factual-memory invocation token cost;
+- detailed-fact drill-down count, token cost, and latency;
 - irrelevant-memory load rate;
 - contradiction-resolution rate;
 - severe memory harm rate.
@@ -1266,6 +1371,11 @@ Which information belongs only in supporting detail?
 ```
 
 Do not introduce top-k ranking merely because a future production system will need it.
+
+The project also does not need to reproduce Wiki-specific machinery such as
+Markdown page generation, topic-page navigation, Git-based document storage, or
+document-level CI refresh. Those ideas may inspire implementation choices, but
+they are not baselines for the trajectory-bound interaction-memory problem.
 
 ### 12.2 Minimal Stage A0 presentation
 
