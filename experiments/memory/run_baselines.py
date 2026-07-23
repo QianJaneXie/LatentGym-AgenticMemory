@@ -155,7 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--latent", default="set_of_2")
     p.add_argument("--prompt", default="full_info")
     p.add_argument("--feedback", default="information")
-    p.add_argument("--num-episodes", type=int, default=5)
+    p.add_argument("--num-episodes", type=int, default=7)
     p.add_argument("--n-trajectories", type=int, default=3)
     p.add_argument("--trajectory-dir", default="latentgym/data/eval/")
     p.add_argument("--output", default="latentgym/results/memory_phase1/")
