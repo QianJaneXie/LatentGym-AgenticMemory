@@ -107,7 +107,15 @@ Longer horizon widens the gap vs no_memory: memory conditions 1-shot from episod
 
 ### `range_100` + `standard` (`traj_000`)
 
-Dir: `latentgym/results/memory_phase1_gpt56_range100_standard/` — 7-episode re-run in progress / see `baselines_summary.json` when complete.
+Dir: `latentgym/results/memory_phase1_gpt56_range100_standard/`
+
+| Condition | reward | turns |
+|---|---|---|
+| no_memory | 5.700 | `[9, 10, 10, 8, 10, 8, 10]` |
+| full_history | 6.120 | `[9, 8, 6, 7, 5, 4, 5]` |
+| episodic_only | **6.140** | `[9, 8, 6, 6, 5, 4, 5]` |
+
+Longer horizon: memory keeps improving into later episodes (~4–5 turns) while no_memory stays ~8–10. Still not 1-shot (interval latent).
 
 ---
 
