@@ -1,10 +1,10 @@
-"""MemoryAPIRunner — Phase 1 memory-aware trajectory runner.
+"""MemoryAPIRunner — Phase 1 / Stage A0 memory-aware trajectory runner.
 
 Isolated from latentgym.eval.single_agent.api_runner.APIRunner.
 Supports three conditions without cognition:
   - full_history: retain the full conversation (LatentGym default behavior)
   - no_memory: clear cross-episode context at each episode boundary
-  - episodic_only: clear cross-episode raw history; inject retrieved facts
+  - episodic_only: clear cross-episode raw history; inject all prior facts (read-all)
 """
 from __future__ import annotations
 
@@ -59,13 +59,14 @@ class MemoryAPIRunner:
         *,
         condition: MemoryCondition = "episodic_only",
         env_name: str = "number_guessing",
-        fact_budget: int = 10,
+        fact_budget: Optional[int] = None,
     ):
         if condition not in ("no_memory", "full_history", "episodic_only"):
             raise ValueError(f"Unknown memory condition: {condition}")
         self.model = model
         self.condition: MemoryCondition = condition
         self.env_name = env_name
+        # None = Stage A0 read-all (plan default). Positive int = later budget sweep.
         self.fact_budget = fact_budget
 
     async def run_trajectory(
@@ -310,6 +311,9 @@ class MemoryAPIRunner:
                     "condition": self.condition,
                     "trajectory_id": traj_id,
                     "fact_budget": self.fact_budget,
+                    "presentation_mode": (
+                        "read_all" if self.fact_budget is None else f"budget_{self.fact_budget}"
+                    ),
                     "facts": store.to_list(),
                     "decisions": decision_logger.to_list(),
                     "n_facts": len(store),

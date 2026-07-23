@@ -36,9 +36,12 @@ def test_retrieval_excludes_future_episodes():
             )
         )
     result = retrieve_episodic_facts(
-        store, trajectory_id="traj_0", episode_idx=2, budget=20
+        store, trajectory_id="traj_0", episode_idx=2
     )
     assert all(f.episode_idx < 2 for f in result.facts)
+    # Stage A0 read-all: every prior-episode fact, no top-k truncation.
+    assert len(result.facts) == sum(1 for f in store.all_facts() if f.episode_idx < 2)
+    assert "read_all" in result.query
     prompt = format_facts_for_prompt(result.facts)
     assert "target_number" not in prompt
     assert '"set_values"' not in prompt
