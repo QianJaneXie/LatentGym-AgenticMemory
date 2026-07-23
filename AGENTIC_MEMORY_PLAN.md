@@ -904,7 +904,158 @@ Run the conditions incrementally rather than implementing the full hierarchy at 
 9. **Budgeted retrieval**
    - add top-k, ranking, or context budgets only after the read-all factual baseline shows that memory content is useful and store size causes measurable interference or cost.
 
-### 8.2 Primary metrics
+### 8.2 Baseline families and recommended comparison matrix
+
+This section summarizes the baseline discussion for the first experiments. Hidden-state, hidden-state-embedding, and latent-vector memory baselines are deliberately excluded for now.
+
+The goal is not to reimplement every external memory system end to end. For LatentGym, use controlled **system-pattern baselines** that isolate what information is retained and shown to the same task agent.
+
+#### Family 0: context-only references
+
+1. **No cross-task memory**
+   - each episode starts without prior episode information;
+   - measures the task agent's non-memory capability.
+
+2. **Full history**
+   - retain the original visible interaction transcript;
+   - serves as a high-context reference rather than a storage-efficient method.
+
+3. **Recent window or rolling summary** — optional after the minimum pilot
+   - retain only the last `k` episodes, or one unconstrained running summary;
+   - tests whether generic context compression is already sufficient without an explicit factual schema.
+
+#### Family 1: fact-centric baselines
+
+4. **Outcome-only factual memory**
+   - retain only externally verified episode outcomes;
+   - tests the smallest factual representation.
+
+5. **Context-action-outcome factual memory**
+   - retain the situation, action, and observed result;
+   - tests whether facts need enough context to be reusable.
+
+6. **Atomic fact representation baseline**
+   - use an LLM prompt to extract short, flat, reusable facts from the agent-visible prefix;
+   - deduplicate facts, but do not require context-action-outcome structure, a source tree, or a detailed-evidence layer;
+   - keep it append-only and read all extracted facts in the small-memory experiment;
+   - this is a representation ablation, not a faithful reproduction of Mem0.
+
+7. **Provenance-grounded factual memory — proposed method, Stage A**
+   - retain objective facts with stable source references;
+   - initially read all facts;
+   - later allow a compact fact to open its linked detailed record.
+
+8. **Oracle factual summary**
+   - construct the best concise factual memory from information that was genuinely visible to the agent;
+   - never expose the hidden latent, future targets, or evaluator-only ground truth;
+   - separates factual representation failure from the possibility that factual memory is not useful.
+
+#### Family 2: experience- or skill-centric baselines
+
+9. **Naive reflection / lesson summary**
+   - after each episode or prefix, ask an LLM what lesson should be carried forward;
+   - retain the lesson without an explicit factual evidence bundle;
+   - tests a minimal experience-memory baseline.
+
+10. **Hermes-style experience or skill only**
+    - generate reusable procedural advice, strategies, or lessons from prior interactions;
+    - show the skill to the task agent without separately showing the factual episodes that produced it;
+    - tests the manager's concern that an experience-only system may be useful in-distribution but brittle when the current context conflicts with the learned lesson.
+
+11. **Hermes-style facts plus experience / skills**
+    - provide both concise factual records and the reusable skill or lesson derived from them;
+    - tests whether retaining evidence improves the safe use of experience.
+
+The Hermes labels refer to the system pattern of persistent memory plus skills and an experience-driven learning loop, not necessarily a full reproduction of every Hermes Agent subsystem.
+
+The early atomic-fact baseline is deliberately framework-independent. A **faithful Mem0 system baseline** is deferred until retrieval scale becomes relevant. That later baseline should preserve Mem0's own extraction and query-based top-k or hybrid retrieval behavior, rather than stripping away the features that distinguish the system.
+
+Official project references:
+
+- [Hermes Agent documentation](https://hermes-agent.nousresearch.com/docs/)
+- [Mem0: How It Works](https://docs.mem0.ai/core-concepts/how-it-works)
+
+#### Family 3: provenance and hierarchy ablations
+
+12. **Compact facts without drill-down**
+    - expose only concise factual records.
+
+13. **Compact facts plus always-open details**
+    - expose both summaries and their detailed evidence;
+    - provides an upper-cost reference for the detail layer.
+
+14. **Compact facts plus selective drill-down**
+    - show concise facts first;
+    - allow the agent to open detailed evidence only when ambiguity, contradiction, or low confidence is detected.
+
+Cognitive-memory variants remain a later Stage B comparison and should not block the factual baseline study.
+
+#### What each key comparison isolates
+
+| Comparison | Primary question |
+|---|---|
+| No memory vs. full history | Is cross-task information useful at all? |
+| Full history vs. factual memory | Can structured facts replace raw transcript context? |
+| Outcome-only vs. context-action-outcome | What factual granularity is necessary? |
+| Atomic flat facts vs. provenance-grounded event facts | Do context-action-outcome structure and explicit source grounding add value beyond flat fact extraction? |
+| Skill only vs. facts only | Is generalized experience more useful than retaining events? |
+| Skill only vs. facts plus skill | Do supporting facts reduce brittle or toxic skill use? |
+| Compact facts vs. compact facts plus drill-down | Does access to original evidence help under ambiguity or conflict? |
+| Proposed facts vs. oracle facts | Is the bottleneck extraction quality or memory utility? |
+
+#### Recommended experiment order
+
+Do not run every baseline in the first sweep.
+
+**Number Guessing defaults for these pilots**
+
+- horizon: use the environment default of **7 episodes** (do not use a shortened 5-episode debug horizon once reporting Stage A results);
+- primary latent after smoke tests: **`range_100`** with `feedback=standard` (enough headroom that memory helps but does not trivially 1-shot);
+- optional smoke latent: `set_of_2` with `feedback=information` only to verify plumbing;
+- model for real-API pilots: a strong fixed task agent (currently GPT-5.6 via LLMCenter);
+- Stage A0 presentation: **read-all** prior-episode facts unless a later phase demonstrates interference.
+
+**Pilot 1: establish factual-memory utility**
+
+1. no memory;
+2. full history;
+3. outcome-only facts;
+4. context-action-outcome facts;
+5. oracle factual summary.
+
+**Pilot 2: compare factual representations and experience paradigms**
+
+6. atomic flat facts, read-all;
+7. provenance-grounded event facts, read-all;
+8. naive reflection or Hermes-style skill only;
+9. facts plus the same skill.
+
+A faithful Mem0 system comparison is not part of this pilot. Add it later only when memory volume makes query-based retrieval meaningful.
+
+**Pilot 3: test why provenance matters**
+
+10. compact facts without details;
+11. compact facts plus always-open details;
+12. compact facts plus selective drill-down;
+13. conflict, ambiguity, noise, and latent-drift cases.
+
+Only after these pilots should the project add cognitive-memory formation and RL.
+
+#### Fair-comparison rules
+
+- Use the same task-agent model, decoding configuration, max turns, trajectory files, latent, target sequence, and random seed across paired conditions.
+- Every memory baseline may consume only the same agent-visible prefix. No baseline may use future episodes, hidden latent labels, or evaluator-only state.
+- Create or update memory at the same episode boundaries across conditions.
+- When LLM extraction is required, use the same extractor model and comparable prompt/output limits where possible; log the exact prompt version.
+- In the first small-memory pilot, allow read-all memory and report token cost. Do not prematurely force a top-k budget.
+- After utility is established, add a matched-context-budget experiment to distinguish better representation from simply providing more tokens.
+- Report memory-construction calls, retrieval calls, context tokens, and task-agent calls separately.
+- Use common-prefix paired or multi-branch rollouts whenever possible so that only the memory condition changes.
+- Keep **representation ablations** separate from **policy ablations**. For example, first compare the same fixed facts under different formats before adding learned retrieval.
+- Treat Hermes-style baselines as transparent LatentGym adaptations unless the full external implementation can be integrated without changing the task agent or information available.
+- Do not label the read-all atomic-fact ablation as Mem0. Reserve the Mem0 name for a later faithful system baseline that preserves its extraction and query-based retrieval behavior.
+
+### 8.3 Primary metrics
 
 - cumulative reward;
 - per-episode reward;
@@ -918,7 +1069,7 @@ Run the conditions incrementally rather than implementing the full hierarchy at 
 - contradiction-resolution rate;
 - severe memory harm rate.
 
-### 8.3 Acceptance criteria before Stage B
+### 8.4 Acceptance criteria before Stage B
 
 Proceed to cognitive memory only after:
 
@@ -1207,25 +1358,45 @@ The initial system never physically deletes a detailed factual record. A fact or
 
 ## 14. Experimental Conditions by Stage
 
-### 14.1 Stage A: factual memory
+### 14.1 Stage A: factual memory and external-system baselines
 
-Minimum set:
+Minimum pilot set:
 
 1. no memory;
 2. full history;
-3. compact factual memory;
-4. detailed facts only;
-5. hierarchical facts with drill-down;
-6. oracle factual summary, if needed to separate summarization failure from memory utility.
+3. outcome-only factual memory;
+4. context-action-outcome factual memory;
+5. oracle factual summary.
+
+External memory-pattern comparison, added after the minimum pilot:
+
+6. atomic flat fact extraction, read-all;
+7. provenance-grounded event facts, read-all;
+8. naive reflection or Hermes-style experience/skill only;
+9. the same experience/skill plus supporting facts;
+10. compact facts plus selective detailed-fact drill-down.
+
+Optional references after scale or ambiguity becomes relevant:
+
+11. recent-window or rolling-summary context;
+12. detailed facts only;
+13. always-open compact facts plus details;
+14. deterministic or semantic top-k retrieval;
+15. random-k retrieval as a routing sanity check;
+16. faithful Mem0 system baseline using its own extraction plus query-based top-k or hybrid retrieval.
 
 Key ablations:
 
 - facts with versus without source references;
-- deterministic summaries versus LLM summaries;
+- facts only versus experience/skill only versus facts plus the same experience/skill;
+- deterministic facts versus LLM-extracted atomic facts;
+- atomic flat facts versus provenance-grounded event facts;
 - episode-start retrieval versus first-decision retrieval;
-- raw history versus compact facts under matched budget;
+- raw history versus compact facts under both read-all and later matched-budget settings;
 - always-open details versus selective drill-down;
-- conflict-present versus conflict-absent trajectories.
+- conflict-present versus conflict-absent trajectories;
+- stationary latent versus latent drift;
+- automatically extracted facts versus oracle factual summaries.
 
 ### 14.2 Stage B: cognition
 
@@ -1255,7 +1426,8 @@ Key ablations:
 ### Debug stage
 
 - environment: `number_guessing`;
-- one easy recurring-set latent;
+- horizon: **7 episodes** (environment default);
+- start with one easy recurring-set latent for plumbing, then move to `range_100` for utility claims;
 - 3 to 5 trajectories;
 - deterministic or low-temperature task agent;
 - manually inspect every trajectory and provenance chain.
@@ -1264,10 +1436,13 @@ Key ablations:
 
 Use one complete retained archive per trajectory across all conditions.
 
-- 30 to 50 trajectories per condition;
+- horizon: **7 episodes** unless a later ablation explicitly varies horizon;
+- primary reporting latent: `range_100` (+ `standard` feedback);
+- 30 to 50 trajectories per condition for the main table; early pilots may use fewer seeds but must not mix 5- and 7-episode files;
 - fixed trajectory files shared across conditions;
 - begin with a generous read-all condition because the factual store is small;
 - compare alternative factual schemas and writing criteria before retrieval algorithms;
+  the first schema split to finish is **outcome-only** versus **context-action-outcome** (or denser turn-level context-action-outcome records);
 - add a retrieval/context-budget sweep only if the read-all condition shows measurable context interference or cost;
 - include at least one stationary and one drift/conflict setting;
 - complete Stage A before enabling automatic cognitive memory.
@@ -1409,18 +1584,29 @@ Tasks:
 - define one minimal `FactualRecord` representation containing context, action, observed outcome, and source references;
 - implement deterministic Number Guessing recording;
 - implement append-only serialization;
-- show all accumulated factual records to the next episode;
+- show all accumulated factual records to the next episode (**read-all**; no premature top-k);
 - add decision logging that preserves the current decision context, every available factual-memory candidate, the facts shown to the agent, the task action, immediate and suffix outcomes, and reproducibility metadata;
 - assign stable `decision_id`, `counterfactual_group_id`, and branch fields even before RL so paired traces can be added without changing the data model;
-- compare alternative factual bodies such as outcome-only versus context-action-outcome.
+- compare alternative factual bodies such as outcome-only versus context-action-outcome;
+- run the minimum baseline set: no memory, full history, outcome-only facts, context-action-outcome facts, and oracle factual summary;
+- after the minimum set works, add an atomic flat-fact representation baseline, Hermes-style skill only, and facts plus the same skill;
+- defer a faithful Mem0 system baseline until Phase 3, when query-based top-k or hybrid retrieval can be tested meaningfully;
+- keep hidden-state and hidden-state-embedding baselines out of scope for this phase.
+
+Current implementation note (as of the LatentGym Phase 1 runners):
+
+- landed conditions are `no_memory`, `full_history`, and `episodic_only`;
+- `episodic_only` currently injects a **dense** read-all store (per-turn greater/less/correct facts plus episode outcomes), which is closer to a dense context-action-outcome body than to a pure outcome-only body;
+- **outcome-only** and **oracle factual summary** are still required to finish Pilot 1 on `range_100` with 7 episodes;
+- do not treat earlier 5-episode pilots as the reporting horizon.
 
 Acceptance criteria:
 
 - records contain only agent-visible evidence;
 - no inferred advice enters the factual layer;
 - hidden evaluator fields never enter memory;
-- no-memory, full-history, and read-all factual-memory conditions run end to end;
-- the team can state which factual fields appear useful or harmful.
+- no-memory, full-history, and read-all factual-memory conditions run end to end on **7-episode** trajectory files;
+- the team can state which factual fields appear useful or harmful (at least outcome-only vs denser context-action-outcome records on `range_100`).
 
 ### Phase 2: split core facts from detailed evidence
 
@@ -1446,12 +1632,15 @@ Tasks:
 - keep read-all as the primary baseline;
 - add ranking, top-k, or budgets only if memory volume causes measurable interference or cost;
 - compare task-start and decision-time retrieval;
-- measure retrieval errors separately from memory-content errors.
+- measure retrieval errors separately from memory-content errors;
+- only at this stage, add a faithful Mem0 system baseline that preserves its own extraction and query-based top-k or hybrid retrieval behavior;
+- compare the faithful Mem0 system against matched components where possible, such as the same extracted memories under read-all versus Mem0 retrieval.
 
 Acceptance criteria:
 
 - the need for selective retrieval is demonstrated empirically rather than assumed;
-- deterministic retrieval baselines precede learned retrieval.
+- deterministic retrieval baselines precede learned retrieval;
+- the faithful Mem0 comparison is reported as an end-to-end system baseline, not confused with the atomic-fact representation ablation.
 
 ### Phase 4: handwritten cognition and paired regression
 
@@ -2065,6 +2254,8 @@ The project does not need to prove that Number Guessing transfers directly to co
 
 ### Factual memory
 
+- Which baseline pattern is most informative after the minimum pilot: atomic flat facts, Hermes-style skills, or facts plus skills?
+- Does provenance improve task behavior, or primarily improve auditability and failure diagnosis?
 - Which observed events deserve promotion into the default factual-memory presentation?
 - Does a small read-all factual memory improve over no memory?
 - Can it match full history without first optimizing retrieval?
