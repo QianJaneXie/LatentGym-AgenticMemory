@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 1 baselines: no_memory / full_history / episodic_only on Number Guessing.
+"""Phase 1 / Pilot 1 baselines on Number Guessing.
 
 Reuses the same trajectory JSON files across conditions.
 """
@@ -21,7 +21,18 @@ from latentgym.cli.run_eval import _parse_model_spec
 
 logger = logging.getLogger(__name__)
 
-CONDITIONS = ("no_memory", "full_history", "episodic_only")
+PILOT1_CONDITIONS = (
+    "no_memory",
+    "full_history",
+    "outcome_only",
+    "episodic_only",  # dense context-action-outcome + outcomes
+    "oracle_summary",
+)
+
+PILOT2_CONDITIONS = (
+    "skill_only",
+    "facts_plus_skill",
+)
 
 
 def _load_traj_files(trajectory_dir: Path, env_name: str, latent_id: str) -> list[Path]:
@@ -54,7 +65,6 @@ async def run_condition(
 
     summaries = []
     for i, traj_path in enumerate(traj_files[:n_trajectories]):
-        # Fresh model call counter per trajectory for MockModel fairness across conditions
         if hasattr(model, "_call_count"):
             model._call_count = 0
         env = make_env(fd, trajectory_path=str(traj_path))
@@ -116,7 +126,6 @@ async def main_async(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f"No trajectories under {args.trajectory_dir}")
 
     model = _parse_model_spec(args.model)
-    # For number guessing mock sanity, prefer numeric guesses if using mock:random
     if isinstance(model, MockModel) and model._default_response == "[red]":
         model = MockModel(
             name=model.name,
@@ -127,10 +136,14 @@ async def main_async(args: argparse.Namespace) -> None:
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    conditions = tuple(args.conditions) if args.conditions else PILOT1_CONDITIONS
     all_summaries = {}
-    for condition in CONDITIONS:
+    summary_path = output_dir / "baselines_summary.json"
+    if args.merge_existing and summary_path.exists():
+        all_summaries = json.loads(summary_path.read_text())
+
+    for condition in conditions:
         logger.info("Running condition=%s", condition)
-        # Independent model instance state per condition
         if hasattr(model, "_call_count"):
             model._call_count = 0
         all_summaries[condition] = await run_condition(
@@ -142,23 +155,35 @@ async def main_async(args: argparse.Namespace) -> None:
             n_trajectories=args.n_trajectories,
         )
 
-    (output_dir / "baselines_summary.json").write_text(
-        json.dumps(all_summaries, indent=2)
-    )
-    print(f"Wrote {output_dir / 'baselines_summary.json'}")
+    summary_path.write_text(json.dumps(all_summaries, indent=2))
+    print(f"Wrote {summary_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model", default="mock:random")
     p.add_argument("--env", default="number_guessing")
-    p.add_argument("--latent", default="set_of_2")
+    p.add_argument("--latent", default="range_100")
     p.add_argument("--prompt", default="full_info")
-    p.add_argument("--feedback", default="information")
+    p.add_argument("--feedback", default="standard")
     p.add_argument("--num-episodes", type=int, default=7)
-    p.add_argument("--n-trajectories", type=int, default=3)
+    p.add_argument("--n-trajectories", type=int, default=1)
     p.add_argument("--trajectory-dir", default="latentgym/data/eval/")
     p.add_argument("--output", default="latentgym/results/memory_phase1/")
+    p.add_argument(
+        "--conditions",
+        nargs="+",
+        default=None,
+        help=(
+            f"Subset of conditions. Pilot1={list(PILOT1_CONDITIONS)}; "
+            f"Pilot2 extras={list(PILOT2_CONDITIONS)}. Default: all Pilot 1."
+        ),
+    )
+    p.add_argument(
+        "--merge-existing",
+        action="store_true",
+        help="Merge into existing baselines_summary.json instead of replacing it",
+    )
     return p
 
 

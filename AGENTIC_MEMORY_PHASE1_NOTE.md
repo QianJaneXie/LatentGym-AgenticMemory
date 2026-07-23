@@ -1,29 +1,25 @@
 # Agentic Memory — Phase 1 Note
 
-**Status:** Stage A0 plumbing + GPT pilots complete; Pilot 1 baseline matrix **not** fully closed  
+**Status:** Pilot 1 complete on `range_100` (single trajectory, 7 episodes, GPT)  
 **Depends on:** Phase 0 (`AGENTIC_MEMORY_PHASE0_NOTE.md`)  
-**Scope:** single-layer episodic facts only (no cognition / no regression / no drill-down)
+**Scope:** single-layer factual memory baselines (no cognition / no drill-down / no Mem0)
 
 ---
 
 ## Relation to `AGENTIC_MEMORY_PLAN.md`
 
-Aligned with plan **Phase 1 / Stage A0** and §8.2 baseline families:
+Pilot 1 minimum set (§8.2 / §14.1):
 
-| Plan item | Status here |
-|---|---|
-| Single-layer facts + `source_ref` | Done (`EpisodicFact`) |
-| Read-all prior facts (no top-k) | Done (`fact_budget=None`) |
-| Horizon **7 episodes** (env default) | Done (reporting runs) |
-| Primary latent `range_100` + `standard` | Done for focus; `set_of_2` is smoke only |
-| no memory / full history | Done |
-| Dense context–action–outcome records plus episode outcomes (`episodic_only`) | Done |
-| **Outcome-only** facts condition | **Missing** |
-| **Oracle** factual summary | **Missing** |
-| Atomic flat facts / Hermes skill baselines | Later (Pilot 2) |
-| Two-level facts / drill-down / Mem0 | Later phases |
+| Plan baseline | Runner condition | Status |
+|---|---|---|
+| No cross-task memory | `no_memory` | Done |
+| Full history | `full_history` | Done |
+| Outcome-only factual memory | `outcome_only` | Done |
+| Context–action–outcome factual memory | `episodic_only` (dense turn + outcome records) | Done |
+| Oracle factual summary | `oracle_summary` | Done |
 
-Earlier 5-episode pilots were discarded / overwritten; do not mix them with 7-episode reporting.
+Defaults used for reporting: **7 episodes**, latent **`range_100`**, feedback **`standard`**, presentation **read-all**, model **GPT-5.6**.  
+`set_of_2` remains optional plumbing smoke only.
 
 ---
 
@@ -34,39 +30,16 @@ latentgym/memory/
   types.py, episodic_store.py, fact_extractor.py,
   retriever.py, decision_logger.py, __init__.py
 
-latentgym/eval/memory_agent/
-  runner.py          # MemoryAPIRunner
-  __init__.py
-
-experiments/memory/run_baselines.py   # default --num-episodes 7
+latentgym/eval/memory_agent/runner.py
+experiments/memory/run_baselines.py
 tests/memory/
-  test_fact_constraints.py
-  test_provenance.py
-  test_store_roundtrip.py
-  test_no_ground_truth_leakage.py
 ```
 
-`APIRunner` was not modified beyond the Phase 0 boundary comment. Stores are append-only; budgets mean prompt injection limits, not disk deletion.
+Conditions: `no_memory`, `full_history`, `outcome_only`, `episodic_only`, `oracle_summary`.
 
 ---
 
-## Conditions (current runner)
-
-| Condition | Cross-episode context | Memory injection |
-|---|---|---|
-| `full_history` | Full conversation retained | None |
-| `no_memory` | Cleared at each episode boundary | None |
-| `episodic_only` | Cleared at each episode boundary | **All** prior-episode facts (read-all; dense turn + outcome records) |
-
-Memory logs: `TrajectoryResult.metadata["memory"]` (`presentation_mode: read_all`) and sidecars under `memory/`.
-
-**Explorer caveat:** for `no_memory` / `episodic_only`, saved `conversation` is the final episode state. Earlier episodes live in `memory/*_facts.json` and `episode_turns`.
-
-Episode 0 has no prior facts; memory differences start from episode 1 onward.
-
----
-
-## How to run
+## How to run Pilot 1
 
 ```bash
 source .env && source "$VENV_DIR/bin/activate"
@@ -74,7 +47,6 @@ export PYTHONPATH="${PWD}:${PWD}/TextArena:${PYTHONPATH:-}"
 
 python -m pytest tests/memory -q
 
-# Primary Stage A focus
 python experiments/memory/run_baselines.py \
   --model llmcenter:gpt-5.6-sol \
   --env number_guessing --latent range_100 \
@@ -82,24 +54,18 @@ python experiments/memory/run_baselines.py \
   --n-trajectories 1 --num-episodes 7 \
   --trajectory-dir latentgym/data/eval/ \
   --output latentgym/results/memory_phase1_gpt56_range100_standard/
-
-# Optional plumbing smoke (not the main claim latent)
-python experiments/memory/run_baselines.py \
-  --model llmcenter:gpt-5.6-sol \
-  --env number_guessing --latent set_of_2 \
-  --prompt full_info --feedback information \
-  --n-trajectories 1 --num-episodes 7 \
-  --trajectory-dir latentgym/data/eval/ \
-  --output latentgym/results/memory_phase1_gpt56_setof2_info/
 ```
 
-Primary model: **GPT-5.6 via LLMCenter**. Horizon: **7 episodes**.
+Subset / merge:
+
+```bash
+python experiments/memory/run_baselines.py ... \
+  --conditions outcome_only oracle_summary --merge-existing
+```
 
 ---
 
-## Pilot findings (read-all, GPT-5.6, 7 episodes)
-
-### Primary: `range_100` + `standard` (`traj_000`)
+## Pilot 1 findings (`range_100`, `traj_000`, 7 episodes)
 
 Dir: `latentgym/results/memory_phase1_gpt56_range100_standard/`
 
@@ -107,37 +73,40 @@ Dir: `latentgym/results/memory_phase1_gpt56_range100_standard/`
 |---|---|---|
 | no_memory | 5.700 | `[9, 10, 10, 8, 10, 8, 10]` |
 | full_history | 6.120 | `[9, 8, 6, 7, 5, 4, 5]` |
+| outcome_only | 6.020 | `[9, 8, 6, 7, 7, 7, 5]` |
 | episodic_only | **6.140** | `[9, 8, 6, 6, 5, 4, 5]` |
+| oracle_summary | 6.120 | `[9, 8, 6, 7, 5, 4, 5]` |
 
-Dense factual memory ≈ full history ≫ no memory; later episodes ~4–5 turns (not 1-shot).
+Reading (single-seed pilot, not a multi-seed proof):
 
-### Smoke: `set_of_2` + `information` (`traj_000`)
+- Any factual memory beats no memory.
+- Dense context–action–outcome (`episodic_only`) ≈ full history, slightly above outcome-only.
+- Oracle summary matches full history here; does not beat dense facts on this seed.
+- Single trajectory by design for this pilot; next work is Pilot 2, not more Pilot 1 seeds.
 
-Dir: `latentgym/results/memory_phase1_gpt56_setof2_info/`
+### Smoke: `set_of_2` + `information` (`traj_000`, 7 episodes)
 
-| Condition | reward | turns |
-|---|---|---|
-| no_memory | 5.720 | `[9, 10, 9, 9, 9, 9, 9]` |
-| full_history | **6.520** | `[9, 10, 1, 1, 1, 1, 1]` |
-| episodic_only | **6.520** | `[9, 10, 1, 1, 1, 1, 1]` |
-
-Useful for plumbing; too easy for representation / cognition headroom.
+Dir: `latentgym/results/memory_phase1_gpt56_setof2_info/` — plumbing only; too easy for representation headroom.
 
 ---
 
-## Safety invariants enforced
+## Safety invariants
 
 1. Fact extraction uses only agent-visible turn text + episode-end feedback.
-2. Verified facts reject inferential terms (`because`, `should`, `always`, …).
-3. Decision traces must reference known fact IDs.
-4. Presentation only considers facts with `episode_idx < current`.
-5. Runner scans prompts for JSON-ish ground-truth key dumps before each generate.
+2. Verified facts reject inferential terms.
+3. Decision traces reference known fact IDs.
+4. Presentation only uses `episode_idx < current`.
+5. Oracle summary uses only agent-visible revealed targets / outcomes (no latent `range_start` / `set_values`).
 
 ---
 
-## Next (to finish Pilot 1 on `range_100`)
+## Next → Pilot 2
 
-1. **Add `outcome_only` condition** — inject only episode-outcome facts; compare to the current dense `episodic_only` store (plan: outcome-only vs context–action–outcome).
-2. **Multi-seed** — run at least `traj_001` / `traj_002` (already generated under `data/eval/number_guessing/range_100/`) for the three (then four) conditions.
-3. **Oracle factual summary** (handwritten or scripted from agent-visible outcomes, e.g. “targets fall in [655,755]”) as an upper-bound factual representation — not hidden latent dumps.
-4. Defer atomic LLM-extracted facts, Hermes-style skill baselines, drill-down, and Mem0 until after the above.
+See plan §8.2 Pilot 2:
+
+1. atomic flat facts (read-all) — representation ablation, not Mem0  
+2. provenance-grounded event facts — already covered by `episodic_only`  
+3. Hermes-style skill / lesson only  
+4. facts plus the same skill  
+
+Mem0 / top-k retrieval remain deferred.

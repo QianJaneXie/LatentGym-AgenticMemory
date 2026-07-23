@@ -5,11 +5,14 @@ are deferred until store size causes measurable interference.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
 from latentgym.memory.episodic_store import EpisodicStore
 from latentgym.memory.types import EpisodicFact
+
+_TARGET_REVEALED = re.compile(r"target revealed as (\d+)", re.IGNORECASE)
 
 
 @dataclass
@@ -92,5 +95,80 @@ def format_facts_for_prompt(facts: Sequence[EpisodicFact]) -> str:
         lines.append(
             f"- [{fact.fact_id}] episode={fact.episode_idx}; "
             f"{action_part}outcome={fact.outcome}"
+        )
+    return "\n".join(lines)
+
+
+def select_outcome_only_facts(facts: Sequence[EpisodicFact]) -> List[EpisodicFact]:
+    """Keep only episode-outcome facts (Pilot 1 outcome-only baseline)."""
+    return [
+        f
+        for f in facts
+        if (f.context or {}).get("decision_type") == "episode_outcome"
+    ]
+
+
+def format_skill_from_facts(facts: Sequence[EpisodicFact]) -> str:
+    """Hermes-style procedural lesson from agent-visible outcomes (LatentGym adaptation).
+
+    Deterministic template for Pilot 2 — not a full Hermes Agent integration and not
+    a cognitive-memory schema with regression status.
+    """
+    outcomes = select_outcome_only_facts(facts)
+    if not outcomes:
+        return ""
+
+    revealed: List[int] = []
+    for fact in outcomes:
+        m = _TARGET_REVEALED.search(fact.outcome or "")
+        if m:
+            revealed.append(int(m.group(1)))
+    if not revealed:
+        return (
+            "Experience / skill note (fallible procedural advice; current evidence overrides it):\n"
+            "- Past episodes did not reveal numeric targets in the visible feedback.\n"
+            "- Suggested procedure: use ordinary binary search from the stated range."
+        )
+
+    uniq = sorted(set(revealed))
+    lo, hi = min(uniq), max(uniq)
+    return (
+        "Experience / skill note (fallible procedural advice distilled from past episodes; "
+        "current evidence overrides it):\n"
+        f"- Previously revealed targets: {uniq}\n"
+        f"- Observed span so far: [{lo}, {hi}]\n"
+        "- Suggested procedure: before restarting a full-range binary search, first try values "
+        "near the min and max of previously revealed targets, then search inside that observed "
+        "span when feedback remains consistent with it."
+    )
+
+
+def format_oracle_summary_from_facts(facts: Sequence[EpisodicFact]) -> str:
+    """Build a concise oracle summary from agent-visible outcome facts only.
+
+    Uses revealed targets / solve status from prior episode outcomes. Never reads
+    evaluator-only fields such as latent range_start or set_values.
+    """
+    outcomes = select_outcome_only_facts(facts)
+    if not outcomes:
+        return ""
+
+    revealed: List[int] = []
+    lines = [
+        "Oracle factual summary (compact restatement of agent-visible episode outcomes only; "
+        "current evidence overrides it):",
+    ]
+    for fact in outcomes:
+        lines.append(f"- episode={fact.episode_idx}; {fact.outcome}")
+        m = _TARGET_REVEALED.search(fact.outcome or "")
+        if m:
+            revealed.append(int(m.group(1)))
+
+    if revealed:
+        lo, hi = min(revealed), max(revealed)
+        uniq = sorted(set(revealed))
+        lines.append(
+            f"- compact restatement: observed revealed targets so far = {uniq}; "
+            f"observed min={lo}, max={hi}."
         )
     return "\n".join(lines)

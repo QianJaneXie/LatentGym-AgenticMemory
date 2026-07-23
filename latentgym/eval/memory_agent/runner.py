@@ -1,10 +1,14 @@
 """MemoryAPIRunner — Phase 1 / Stage A0 memory-aware trajectory runner.
 
 Isolated from latentgym.eval.single_agent.api_runner.APIRunner.
-Supports three conditions without cognition:
+Pilot 1 conditions without cognition:
   - full_history: retain the full conversation (LatentGym default behavior)
   - no_memory: clear cross-episode context at each episode boundary
-  - episodic_only: clear cross-episode raw history; inject all prior facts (read-all)
+  - episodic_only: clear raw history; inject all prior facts (dense context-action-outcome)
+  - outcome_only: clear raw history; inject episode-outcome facts only
+  - oracle_summary: clear raw history; inject compact restatement of visible outcomes
+  - skill_only: clear raw history; inject Hermes-style procedural lesson only
+  - facts_plus_skill: clear raw history; inject dense facts plus the same lesson
 """
 from __future__ import annotations
 
@@ -22,12 +26,41 @@ from latentgym.memory.fact_extractor import (
     extract_number_guessing_facts,
     split_boundary_user_message,
 )
-from latentgym.memory.retriever import format_facts_for_prompt, retrieve_episodic_facts
+from latentgym.memory.retriever import (
+    format_facts_for_prompt,
+    format_oracle_summary_from_facts,
+    format_skill_from_facts,
+    retrieve_episodic_facts,
+    select_outcome_only_facts,
+)
 from latentgym.memory.types import DecisionTrace
 
 logger = logging.getLogger(__name__)
 
-MemoryCondition = Literal["no_memory", "full_history", "episodic_only"]
+MemoryCondition = Literal[
+    "no_memory",
+    "full_history",
+    "episodic_only",
+    "outcome_only",
+    "oracle_summary",
+    "skill_only",
+    "facts_plus_skill",
+]
+_COMPACTED_CONDITIONS = (
+    "no_memory",
+    "episodic_only",
+    "outcome_only",
+    "oracle_summary",
+    "skill_only",
+    "facts_plus_skill",
+)
+_FACT_INJECT_CONDITIONS = (
+    "episodic_only",
+    "outcome_only",
+    "oracle_summary",
+    "skill_only",
+    "facts_plus_skill",
+)
 
 def _split_init_system(content: str) -> tuple[str, str]:
     """Split init system message into stable rules vs episode-1 header/obs."""
@@ -61,7 +94,15 @@ class MemoryAPIRunner:
         env_name: str = "number_guessing",
         fact_budget: Optional[int] = None,
     ):
-        if condition not in ("no_memory", "full_history", "episodic_only"):
+        if condition not in (
+            "no_memory",
+            "full_history",
+            "episodic_only",
+            "outcome_only",
+            "oracle_summary",
+            "skill_only",
+            "facts_plus_skill",
+        ):
             raise ValueError(f"Unknown memory condition: {condition}")
         self.model = model
         self.condition: MemoryCondition = condition
@@ -106,7 +147,7 @@ class MemoryAPIRunner:
         conversation = [{"role": "system", "content": rules}]
         ep0_user = ep0_tail or "Begin episode 1."
         conversation.append({"role": "user", "content": ep0_user})
-        if self.condition in ("no_memory", "episodic_only"):
+        if self.condition in _COMPACTED_CONDITIONS:
             open_first_decision = self._maybe_inject_memory(
                 conversation,
                 store=store,
@@ -250,7 +291,7 @@ class MemoryAPIRunner:
                 episode_turn = 0
 
                 # Rebuild context for compacted modes before the next first guess.
-                if not done and self.condition in ("no_memory", "episodic_only"):
+                if not done and self.condition in _COMPACTED_CONDITIONS:
                     conversation = [{"role": "system", "content": rules}]
                     start_user = next_obs or f"--- Episode {current_episode + 1} ---"
                     conversation.append({"role": "user", "content": start_user})
@@ -352,7 +393,7 @@ class MemoryAPIRunner:
         episode_idx: int,
         pending_first_decision: bool,
     ) -> Optional[Dict[str, Any]]:
-        """Inject retrieved facts into the latest user message for episodic_only."""
+        """Inject memory into the latest user message for compacted fact conditions."""
         decision_logger.update_known_facts(store.fact_ids())
         retrieval = retrieve_episodic_facts(
             store,
@@ -363,9 +404,28 @@ class MemoryAPIRunner:
             budget=self.fact_budget,
         )
 
+        loaded_ids: List[str] = []
+        block = ""
         if self.condition == "episodic_only" and retrieval.facts:
             block = format_facts_for_prompt(retrieval.facts)
-            # Prepend to the latest user message (episode start).
+            loaded_ids = list(retrieval.fact_ids)
+        elif self.condition == "outcome_only" and retrieval.facts:
+            outcomes = select_outcome_only_facts(retrieval.facts)
+            block = format_facts_for_prompt(outcomes)
+            loaded_ids = [f.fact_id for f in outcomes]
+        elif self.condition == "oracle_summary" and retrieval.facts:
+            block = format_oracle_summary_from_facts(retrieval.facts)
+            loaded_ids = [f.fact_id for f in select_outcome_only_facts(retrieval.facts)]
+        elif self.condition == "skill_only" and retrieval.facts:
+            block = format_skill_from_facts(retrieval.facts)
+            loaded_ids = [f.fact_id for f in select_outcome_only_facts(retrieval.facts)]
+        elif self.condition == "facts_plus_skill" and retrieval.facts:
+            facts_block = format_facts_for_prompt(retrieval.facts)
+            skill_block = format_skill_from_facts(retrieval.facts)
+            block = "\n\n".join(p for p in (facts_block, skill_block) if p)
+            loaded_ids = list(retrieval.fact_ids)
+
+        if block:
             for i in range(len(conversation) - 1, -1, -1):
                 if conversation[i]["role"] == "user":
                     conversation[i] = {
@@ -380,8 +440,8 @@ class MemoryAPIRunner:
             return None
         return {
             "episode_idx": episode_idx,
-            "loaded_fact_ids": list(retrieval.fact_ids) if self.condition == "episodic_only" else [],
-            "query": retrieval.query,
+            "loaded_fact_ids": loaded_ids if self.condition in _FACT_INJECT_CONDITIONS else [],
+            "query": f"{retrieval.query}; inject={self.condition}",
             "action": "",
             "outcome": "",
         }
