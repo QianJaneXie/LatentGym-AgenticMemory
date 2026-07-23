@@ -1,18 +1,24 @@
 # Agentic Memory — Phase 1 Note
 
-**Status:** complete (NG Stage A pilot)  
+**Status:** complete (NG Stage A0 / plan Phase 1 pilot)  
 **Depends on:** Phase 0 (`AGENTIC_MEMORY_PHASE0_NOTE.md`)  
-**Scope:** explicit episodic facts only (no cognition / no regression)
+**Scope:** single-layer episodic facts only (no cognition / no regression / no drill-down)
 
 ---
 
 ## Relation to `AGENTIC_MEMORY_PLAN.md`
 
-The plan describes an ideal **two-layer** factual stack (`DetailedFact` → compact `FactualMemory`) plus hierarchical drill-down (`OPEN_DETAILED_FACT`).
+The current plan’s **Phase 1 / Stage A0** is a minimal single-layer factual baseline: write agent-visible facts, then test whether they change behavior vs no memory and full history. Two-level facts, drill-down, cognition, and learned top-k retrieval are later stages.
 
-**This Phase 1 delivery does not implement that stack.** For Number Guessing Stage A we keep a **single-layer** `EpisodicFact` with `source_ref` provenance. Full detailed/compact split and drill-down are **deferred** until a setting where compact summaries are actually lossy.
+**This note matches that intent.** We landed a single-layer `EpisodicFact` with `source_ref` provenance and a three-way condition comparison.
 
-Plan section numbering also moved: handwritten cognition / paired regression is **Phase 3** in the current plan (not “Phase 2” as older notes said). Use the plan for target architecture; use this note for what actually landed.
+Known deviation from the plan’s ideal A0 wording (“read-all, no top-k”):
+
+- `episodic_only` still uses a deterministic ranker with **`fact_budget=10`**.
+- On short `set_of_2` pilots this is often close to showing the useful outcomes; on denser stores (many per-turn facts) it is **not** a strict read-all of every fact.
+- Treat true read-all (or a much higher budget) as a small follow-up if we need stricter A0 alignment; do not treat the current top-10 as the final retrieval design.
+
+Use the plan for target architecture and RQ numbering; use this note for what actually ran.
 
 ---
 
@@ -35,7 +41,7 @@ tests/memory/
   test_no_ground_truth_leakage.py
 ```
 
-`APIRunner` was not modified beyond the Phase 0 boundary comment.
+`APIRunner` was not modified beyond the Phase 0 boundary comment. Stores are append-only; budgets here mean **prompt injection limits**, not disk deletion.
 
 ---
 
@@ -45,7 +51,7 @@ tests/memory/
 |---|---|---|
 | `full_history` | Full conversation retained | None |
 | `no_memory` | Cleared at each episode boundary | None |
-| `episodic_only` | Cleared at each episode boundary | Up to 10 retrieved facts before first guess |
+| `episodic_only` | Cleared at each episode boundary | Up to 10 ranked facts before first guess |
 
 Memory logs are stored in `TrajectoryResult.metadata["memory"]` and as sidecars under `memory/`.
 
@@ -72,11 +78,19 @@ python experiments/memory/run_baselines.py \
   --output latentgym/results/memory_phase1/
 ```
 
-Primary model for real-API pilots: **GPT-5.6 via LLMCenter** (`llmcenter:gpt-5.6-sol` or the current gateway id). Results dirs: `latentgym/results/memory_phase1_{gpt56,kimi,fable5,minicpm}/`.
+Primary model for real-API pilots: **GPT-5.6 via LLMCenter** (`llmcenter:gpt-5.6-sol` or the current gateway id).
+
+Result dirs include:
+
+- `latentgym/results/memory_phase1_{gpt56,kimi,fable5,minicpm}/` — `set_of_2` + `information`
+- `latentgym/results/memory_phase1_gpt56_standard/` — `set_of_2` + `standard`
+- `latentgym/results/memory_phase1_gpt56_range100_standard/` — `range_100` + `standard`
 
 ---
 
-## Pilot findings (same `traj_000`, `set_of_2`, information feedback)
+## Pilot findings
+
+### `set_of_2` + `information` (same `traj_000`)
 
 | Model | no_memory | full_history | episodic_only |
 |---|---|---|---|
@@ -85,11 +99,23 @@ Primary model for real-API pilots: **GPT-5.6 via LLMCenter** (`llmcenter:gpt-5.6
 | GPT-5.6 | ~4.08 | ~4.54 | ~4.54 |
 | Fable5 | ~4.00 | ~4.56 | ~4.34 |
 
-On GPT (cleanest signal): later episodes solve in **1–2 turns** under both `full_history` and `episodic_only`, while `no_memory` stays ~9–10 turns/episode. That supports RQ1/RQ2 **on this trajectory and feedback**: compact episodic facts match full history for exploitation and beat no cross-task memory. It is a pilot signal, not a multi-seed proof.
+On GPT: later episodes solve in **1–2 turns** under both `full_history` and `episodic_only`, while `no_memory` stays ~9–10 turns/episode. Supports plan **RQ1 / RQ3** on this easy setting (small factual set helps; can match full history). Pilot only, not multi-seed proof.
+
+`set_of_2` + `standard` with GPT was essentially unchanged: successful episodes still reveal the target via `Correct! ...`, so the factual layer still gets the points.
+
+### `range_100` + `standard` (GPT, `traj_000`)
+
+| Condition | reward | turns |
+|---|---|---|
+| no_memory | ~4.06 | `[9, 9, 10, 10, 9]` |
+| full_history | ~4.28 | `[9, 7, 7, 6, 7]` |
+| episodic_only | ~4.28 | `[10, 7, 8, 5, 6]` |
+
+Memory still helps and `episodic_only ≈ full_history`, but later episodes stay ~5–7 turns (interval search), not 1-shot. Better Stage A stress test than `set_of_2`.
 
 Observed on mock Phase 0 trajectories (`traj_000` solves; others time out):
 
-- `full_history` keeps far more messages (e.g. 47 vs 14 on `traj_000`)
+- `full_history` keeps far more messages
 - `episodic_only` injects `Verified past records...` after episode 0
 - no `"target_number"` / `"set_values"` / `"episode_configs"` keys appear in agent messages
 
@@ -107,8 +133,8 @@ Observed on mock Phase 0 trajectories (`traj_000` solves; others time out):
 
 ## Next
 
-- Broader Stage A pilots (more trajectories / latents) still use the three-way comparison when measuring factual memory.
-- Default **treatment / default agent path** going forward: `episodic_only`.
-- Keep `full_history` and `no_memory` as **baselines** whenever reporting Stage A claims; do not drop them from the eval harness.
-- Dual-layer facts + drill-down: deferred (see plan Stage A RQ3).
-- Cognition / paired regression: plan **Phase 3**, only after Stage A acceptance criteria you care about are met.
+- Prefer reporting Stage A claims with the three-way comparison; default treatment path remains `episodic_only`.
+- Optional A0 tightening: read-all (or raise budget) so presentation matches the plan’s “no premature top-k” wording.
+- Plan **Phase 2**: two-level facts / drill-down only if single-layer representation is clearly insufficient.
+- Ranking / top-k / context budgets: only after store size causes measurable interference (plan priority order).
+- Cognition / paired regression: later plan phases, after Stage A acceptance criteria you care about are met.

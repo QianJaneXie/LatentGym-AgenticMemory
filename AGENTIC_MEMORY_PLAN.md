@@ -85,27 +85,43 @@ The design deliberately keeps two forms of validation:
 These are complementary. Passing a regression suite does not make a cognition universally correct.
 
 
-### Storage assumption: retain broadly, retrieve selectively
+### Storage assumption and near-term priority
 
-For the initial agentic system, persistent disk capacity is **not** treated as the primary bottleneck. The system should prefer retaining evidence over making irreversible deletion decisions.
+Persistent disk capacity is **not** treated as the primary bottleneck. The system should prefer retaining evidence over making irreversible deletion decisions.
 
 Operational assumptions:
 
-- detailed factual records are append-only and retained on durable storage;
-- compact factual memories are indexes and decision-oriented summaries, not replacements created to save disk space;
+- factual records and their source evidence are append-only and retained on durable storage;
 - physical deletion is out of scope for the initial experiments and the first RL formulation;
-- correction, invalidation, and forgetting are implemented as metadata operations such as `corrected`, `obsolete`, `stale`, `retracted`, `cold`, or lower retrieval priority;
+- correction, invalidation, and forgetting are metadata operations such as `corrected`, `obsolete`, `stale`, `retracted`, `cold`, or lower presentation priority;
 - no provenance record is silently destroyed;
-- the scarce resources are **retrieval quality, context-window bandwidth, latency, tool calls, and attention**, not bytes on disk.
+- compact factual memories are decision-oriented representations of evidence, not replacements created to save disk space.
 
-Accordingly, the central routing problem is not “which memories should be permanently erased?” It is:
+However, **large-scale retrieval is not the first research problem**. The current bottleneck is that even a few memory files or a small number of records may be poorly structured, hard to interpret, or unhelpful to the task agent. The initial priority order is:
 
 ```text
-Given a large retained archive, which compact facts or cognitions should be surfaced
-for this concrete decision, and when should the agent open the detailed evidence?
+1. Decide what deserves to be stored as a fact.
+2. Decide what belongs in the core factual record versus supporting detail.
+3. Test whether a small factual memory set improves behavior when all facts are shown.
+4. Add provenance-based drill-down when summaries are ambiguous.
+5. Only after scale becomes an observed problem, study ranking, top-k retrieval, and budgets.
 ```
 
-Storage size may still be reported for engineering completeness, but it should not drive the initial research objective or reward function.
+Therefore:
+
+- the first factual-memory prototype may use a **single factual layer**;
+- when the store is small, the runner should present all factual memories rather than prematurely introducing a learned or heuristic top-k retriever;
+- a two-level factual hierarchy—core factual memory plus detailed supporting evidence—should be introduced only when it clarifies the representation or resolves ambiguity;
+- retrieval/context budgets remain a later systems problem, not a requirement for proving initial memory utility.
+
+Long term, context-window bandwidth, latency, tool calls, and attention are still scarce even when disk is abundant. At that point the routing problem becomes:
+
+```text
+Given a retained archive, which facts should be surfaced for this concrete decision,
+and when should the agent inspect their detailed evidence?
+```
+
+Storage size may be reported for engineering completeness, but neither disk usage nor permanent deletion should drive the initial objective or reward.
 
 ---
 
@@ -115,32 +131,49 @@ The experiments should be staged. Do not require the cognitive layer to answer t
 
 ### Stage A: factual memory
 
-#### RQ1: Does compact factual memory improve over no cross-task memory?
+#### RQ1: Does a small factual memory set improve over no cross-task memory?
 
 Compare:
 
 - no cross-task memory;
-- compact factual memories retrieved at a decision point.
+- all factual memories accumulated so far.
 
-#### RQ2: Can compact factual memory replace raw full history?
+The first test should avoid retrieval ranking. Its purpose is to determine whether the **content and representation** of factual memory are useful at all.
 
-Compare under controlled or reported token budgets:
+#### RQ2: What belongs in a factual memory?
 
-- full interaction history;
-- compact factual memories.
+Compare factual representations such as:
 
-#### RQ3: Does hierarchical drill-down improve factual memory?
+- episode outcome only;
+- context + action + outcome;
+- failures and surprising outcomes only;
+- all externally verified events;
+- one unified factual record versus a compact core fact linked to supporting detail.
+
+This question precedes optimization of retrieval priority.
+
+#### RQ3: Can factual memory replace raw full history?
 
 Compare:
 
-- compact factual summaries only;
-- compact factual summaries with access to linked detailed records when the agent detects ambiguity, contradiction, or insufficient evidence.
+- full interaction history;
+- a small read-all factual-memory set.
 
-Measure whether drill-down improves robustness enough to justify its token and tool cost.
+Report token usage, but do not impose a tight matched budget in the first pilot.
+
+#### RQ4: Does hierarchical drill-down improve factual memory?
+
+After the single-layer factual baseline is understood, compare:
+
+- factual records without a separate detail layer;
+- compact core facts linked to detailed records;
+- compact facts with on-demand drill-down when the agent detects ambiguity, contradiction, or insufficient evidence.
+
+Measure whether the additional hierarchy improves robustness and interpretability enough to justify its complexity.
 
 ### Stage B: cognitive memory
 
-#### RQ4: Does cognitive memory add value beyond its supporting facts?
+#### RQ5: Does cognitive memory add value beyond its supporting facts?
 
 Under identical factual evidence, compare:
 
@@ -150,7 +183,7 @@ Under identical factual evidence, compare:
 
 This comparison directly tests the concern that skill-like systems may rely on distilled experience while discarding the evidence required to question it.
 
-#### RQ5: Does regression validation reduce toxic cognitive memory?
+#### RQ6: Does regression validation reduce toxic cognitive memory?
 
 Compare:
 
@@ -159,7 +192,7 @@ Compare:
 - regression-validated cognition;
 - regression-validated cognition plus invocation-time fact checking.
 
-#### RQ6: Which failures dominate?
+#### RQ7: Which failures dominate?
 
 Separate at least:
 
@@ -176,7 +209,7 @@ Separate at least:
 
 ### Stage C: learned memory policy
 
-#### RQ7: Which decisions should eventually be learned by RL?
+#### RQ8: Which decisions should eventually be learned by RL?
 
 Do not assume the answer in advance. Use the agentic system to determine whether the main bottleneck is:
 
@@ -192,7 +225,15 @@ Do not assume the answer in advance. Use the agentic system to determine whether
 
 ## 3. Memory Hierarchy and Provenance Graph
 
-The initial implementation has three memory levels. A stable identity or soul layer may exist in a production assistant, but it is fixed and out of scope for the first LatentGym experiments.
+The conceptual target has three memory levels. A stable identity or soul layer may exist in a production assistant, but it is fixed and out of scope for the first LatentGym experiments.
+
+The implementation should **not require all three levels on day one**:
+
+- v0 may use one factual record containing the core event plus references to its visible source;
+- v1 may split that record into a compact core fact and detailed supporting evidence;
+- cognitive memory is added only after factual-memory utility is understood.
+
+This lets the project first answer what the factual-memory body should contain before adding retrieval and hierarchy machinery.
 
 ### 3.1 Detailed factual memory
 
@@ -305,7 +346,20 @@ The system should fail loudly when a reference is missing.
 
 ## 4. Staged Agentic Architecture
 
-### 4.1 Stage A: factual-memory architecture
+### 4.0 Stage A0: minimal single-layer factual memory
+
+The first executable memory system may be deliberately simple:
+
+```text
+Task agent completes an episode
+        -> deterministic recorder writes one factual record
+        -> record includes context, action, outcome, and source references
+        -> next episode receives all factual records accumulated so far
+```
+
+No ranking, top-k retrieval, drill-down policy, cognition, or RL is required. This stage tests whether the chosen factual representation changes downstream behavior.
+
+### 4.1 Stage A1: two-level factual-memory architecture
 
 ```mermaid
 flowchart TD
@@ -564,30 +618,121 @@ class CognitiveMemory:
 
 ### 6.4 `DecisionTrace`
 
+A decision trace must preserve both the task decision and the memory decision that preceded it. It must record the full candidate set available at that moment, not only the memories eventually selected.
+
 ```python
 @dataclass
 class DecisionTrace:
     decision_id: str
     trajectory_id: str
     episode_idx: int
+    decision_idx: int
     decision_type: str
-    query: str
+
+    # Concrete state at the moment memory could affect behavior.
+    current_context: dict[str, Any]
+    memory_query: str | None
+
+    # The choice set visible to the memory policy.
+    available_fact_ids: list[str]
+    available_detailed_fact_ids: list[str]
+    available_cognition_ids: list[str]
+
+    # Memory actions actually taken.
     loaded_fact_ids: list[str]
     opened_detailed_fact_ids: list[str]
     loaded_cognition_ids: list[str]
-    cited_memory_ids: list[str]
-    applicability_judgments: dict[str, str]
-    action: str
-    outcome: str
-    reward: float | None
+    memory_action: dict[str, Any]
+    rendered_memory_text: str
+
+    # Task-agent behavior after conditioning on memory.
+    task_action: str
+    cited_or_claimed_used_memory_ids: list[str]
+    action_changed_after_drilldown: bool | None
+
+    # Outcomes and delayed returns.
+    immediate_reward: float | None
+    suffix_reward: float | None
+    sequence_reward: float | None
+    outcome: dict[str, Any]
+
+    # Costs and counterfactual grouping.
+    memory_token_count: int
+    retrieval_call_count: int
+    detailed_fact_call_count: int
+    counterfactual_group_id: str | None
+    branch_id: str | None
+
+    # Reproducibility.
+    model_id: str
+    model_sampling_config: dict[str, Any]
+    prompt_version: str
+    code_commit: str
 ```
 
-### 6.5 `RegressionRun`
+The field `cited_or_claimed_used_memory_ids` is weak evidence because an LLM may misreport what influenced it. Preserve it, but also compare behavior across paired branches to measure whether memory actually changed the action.
+
+### 6.5 `MemoryActionTrace`
+
+Use a separate normalized record when training a router independently from the task agent.
+
+```python
+@dataclass
+class MemoryActionTrace:
+    memory_decision_id: str
+    decision_trace_id: str
+    policy_state: dict[str, Any]
+    candidate_memory_ids: list[str]
+    chosen_action: dict[str, Any]
+    chosen_memory_ids: list[str]
+    rejected_or_unselected_memory_ids: list[str]
+    action_logprob: float | None
+    policy_version: str
+    downstream_suffix_reward: float | None
+    paired_marginal_reward: float | None
+    harm_amount: float | None
+```
+
+Logging unselected candidates is mandatory. Without the choice set, later training can imitate successful selections but cannot learn why one fact should be preferred over another.
+
+### 6.6 `CounterfactualBranchRun`
+
+This generic schema supports factual retrieval, drill-down, and cognition experiments.
+
+```python
+@dataclass
+class CounterfactualBranchRun:
+    counterfactual_group_id: str
+    branch_id: str
+    source_trajectory_id: str
+    fork_episode_idx: int
+    prefix_snapshot_id: str
+    suffix_episode_indices: list[int]
+    memory_action: dict[str, Any]
+    selected_memory_ids: list[str]
+    seed: int
+    episode_rewards: list[float]
+    episode_turns: list[int]
+    first_guess_correct: list[bool]
+    suffix_reward: float
+    sequence_reward: float
+    memory_token_count: int
+    retrieval_call_count: int
+    detailed_fact_call_count: int
+    failure_tags: list[str]
+```
+
+Branches in the same `counterfactual_group_id` must share the same prefix, latent, suffix tasks, task-agent configuration, and sampling setup as closely as the environment permits. Only the memory action should differ.
+
+### 6.7 `RegressionRun`
+
+Cognitive regression tests may retain a cognition-specific view over the generic branch records.
 
 ```python
 @dataclass
 class RegressionRun:
     run_id: str
+    counterfactual_group_id: str
     cognition_id: str
     source_trajectory_id: str
     fork_episode_idx: int
@@ -597,23 +742,58 @@ class RegressionRun:
     episode_rewards: list[float]
     episode_turns: list[int]
     first_guess_correct: list[bool]
+    suffix_reward: float
+    paired_effect: float | None
     memory_token_count: int
     failure_tags: list[str]
 ```
 
-### 6.6 Reference validation
+### 6.8 Reference and visibility validation
 
 Add checks enforcing:
 
 ```text
 cognition -> valid factual-memory IDs
 factual memory -> valid detailed-fact IDs
-decision trace -> valid loaded-memory IDs
+decision trace -> valid candidate and loaded-memory IDs
+counterfactual branches -> identical prefix and suffix configuration
+all memory content -> agent-visible sources only
 ```
+
+Provenance is a hard schema constraint, not a soft reward bonus. A memory action with missing or invalid source references should be rejected rather than rewarded less.
 
 ---
 
 ## 7. Detailed Recording and Factual Summarization
+
+### 7.0 What deserves to be stored
+
+The first design question is semantic usefulness, not disk conservation. Treat fact-writing policy as an explicit experimental variable.
+
+Strong candidates for factual storage include:
+
+- explicit user statements or environment feedback;
+- externally verified outcomes;
+- failed actions and their observed results;
+- surprising outcomes that contradict the agent's expectation;
+- actions with irreversible, costly, or high-impact consequences;
+- context needed to interpret why two superficially similar events differ.
+
+Weak candidates include:
+
+- duplicated restatements;
+- routine intermediate steps with no later decision value;
+- unsupported model speculation presented as fact;
+- evaluator-only information the agent could not observe.
+
+The distinction is not “store little because disk is scarce.” It is “store records whose factual body remains interpretable and potentially decision-relevant.” The source transcript may still be retained for provenance even when an event is not promoted into the default factual-memory presentation.
+
+Initial writing-policy ablations should include:
+
+1. all externally verified episode outcomes;
+2. context + action + outcome for every episode;
+3. failures and surprising outcomes only;
+4. a hybrid policy that always stores explicit outcomes and selectively stores informative action details.
 
 ### 7.1 Number Guessing v0: deterministic implementation
 
@@ -685,6 +865,10 @@ The first experiments should stop here. They do not require cognitive memory.
 
 ### 8.1 Conditions
 
+Run the conditions incrementally rather than implementing the full hierarchy at once.
+
+#### Initial minimum set
+
 1. **No cross-task memory**
    - clear earlier episode context;
    - each episode begins without past records.
@@ -692,20 +876,33 @@ The first experiments should stop here. They do not require cognitive memory.
 2. **Full history**
    - existing LatentGym single-agent behavior.
 
-3. **Compact factual memory**
+3. **Single-layer factual memory, read all**
    - remove raw prior dialogue;
-   - inject retrieved factual summaries only.
+   - provide every factual record accumulated so far;
+   - use no ranking, top-k rule, or retrieval budget while the store is small.
 
-4. **Detailed factual memory only**
-   - provide raw linked records without compact summaries;
-   - useful mainly as an ablation because it may be expensive.
+#### Representation ablations
 
-5. **Hierarchical factual memory**
-   - provide compact factual summaries;
-   - allow selective drill-down to detailed records.
+4. **Outcome-only facts**
+   - store only externally verified episode outcomes.
 
-6. **Matched-budget factual memory**
-   - compare full history and factual memory under an approximately matched token budget where feasible.
+5. **Context-action-outcome facts**
+   - retain enough context and action detail to make the event interpretable.
+
+6. **Selective fact writing**
+   - compare all verified events with a policy that prioritizes explicit statements, failures, surprises, and high-impact outcomes.
+
+#### Later hierarchy experiments
+
+7. **Detailed factual memory only**
+   - provide raw linked records without compact summaries.
+
+8. **Compact core facts plus detailed evidence**
+   - provide all compact facts;
+   - allow linked detailed records to be opened when needed.
+
+9. **Budgeted retrieval**
+   - add top-k, ranking, or context budgets only after the read-all factual baseline shows that memory content is useful and store size causes measurable interference or cost.
 
 ### 8.2 Primary metrics
 
@@ -905,28 +1102,57 @@ This directly tests whether fact retention makes experience safer and more adapt
 
 ## 12. Retrieval Design
 
-### 12.1 Principle
+### 12.1 Near-term principle: prove utility before optimizing retrieval
 
-Retrieve memory when the task agent faces a concrete decision:
+The first experiments should not assume that retrieval scale is already the bottleneck. With only a few factual records, present all of them and test whether the agent can use them.
+
+The immediate questions are:
+
+```text
+What deserves to be written as a fact?
+What is the minimal factual body needed to affect a later decision?
+Which information belongs only in supporting detail?
+```
+
+Do not introduce top-k ranking merely because a future production system will need it.
+
+### 12.2 Minimal Stage A0 presentation
+
+Before the first strategic action of an episode:
+
+1. load every factual record from the current trajectory/session;
+2. preserve stable ordering and source IDs;
+3. log exactly what was shown;
+4. use no learned retriever, similarity search, ranking score, or hard retrieval budget.
+
+This is a **read-all small-memory baseline**, not the final retrieval mechanism.
+
+### 12.3 Stage A1 provenance and drill-down
+
+After the factual representation is useful:
+
+1. split core factual content from supporting detailed evidence where helpful;
+2. show all core facts while the store remains small;
+3. allow the agent to request a linked detailed record when a core fact is ambiguous or contradictory;
+4. measure whether drill-down improves decisions.
+
+### 12.4 Later scale-aware retrieval
+
+Only after the archive creates measurable context cost or interference:
+
+1. formulate retrieval at a concrete decision point;
+2. introduce top-k or context budgets;
+3. rank failures, surprising outcomes, same-decision-type records, and previously useful facts;
+4. compare decision-time retrieval with broad task-start retrieval;
+5. consider a learned retriever only after deterministic baselines.
+
+The eventual decision-time query may be:
 
 ```text
 I am about to choose action X. Which past facts or tested cognitions could change this action?
 ```
 
-Avoid broad topic-similarity retrieval only at task start when the decision is underspecified.
-
-### 12.2 Stage A retrieval
-
-Before the first strategic action of an episode:
-
-1. retrieve up to `K` factual summaries from the current trajectory/session;
-2. rank surprising outcomes and failures above routine events;
-3. allow the agent to request a linked detailed record;
-4. log exactly what was loaded and opened.
-
-For the first implementation, retrieval can be deterministic because Number Guessing has a small store.
-
-### 12.3 Stage B retrieval
+### 12.5 Stage B retrieval
 
 When cognition exists:
 
@@ -1036,12 +1262,14 @@ Key ablations:
 
 ### Factual-memory pilot
 
-Use one complete retained archive per trajectory across all conditions. Experimental limits apply to what is retrieved or placed in context, not to what is stored on disk.
+Use one complete retained archive per trajectory across all conditions.
 
 - 30 to 50 trajectories per condition;
 - fixed trajectory files shared across conditions;
-- several retrieval/context budgets while retaining the same underlying archive;
-- at least one stationary and one drift/conflict setting;
+- begin with a generous read-all condition because the factual store is small;
+- compare alternative factual schemas and writing criteria before retrieval algorithms;
+- add a retrieval/context-budget sweep only if the read-all condition shows measurable context interference or cost;
+- include at least one stationary and one drift/conflict setting;
 - complete Stage A before enabling automatic cognitive memory.
 
 ### Cognitive-memory pilot
@@ -1075,7 +1303,9 @@ Produce:
 
 ## 16. Suggested Repository Layout
 
-Add isolated modules first:
+The following is a **target layout**, not a requirement to create every component immediately. Phase 1 should add only the minimal factual record/store and memory-aware runner needed for the read-all baseline. Add detailed stores, retrievers, cognition, and regression components only in the phase that tests them.
+
+Add isolated modules incrementally:
 
 ```text
 latentgym/
@@ -1172,40 +1402,58 @@ Acceptance criteria:
 - trajectory JSON or viewer works;
 - exact episode-boundary and message-retention paths are documented.
 
-### Phase 1: detailed and compact factual stores
+### Phase 1: single-layer factual-memory baseline
 
 Tasks:
 
-- add `DetailedFact` and `FactualMemory` schemas;
+- define one minimal `FactualRecord` representation containing context, action, observed outcome, and source references;
+- implement deterministic Number Guessing recording;
 - implement append-only serialization;
-- implement deterministic Number Guessing recording and summarization;
-- add provenance validation;
-- add decision logging.
+- show all accumulated factual records to the next episode;
+- add decision logging that preserves the current decision context, every available factual-memory candidate, the facts shown to the agent, the task action, immediate and suffix outcomes, and reproducibility metadata;
+- assign stable `decision_id`, `counterfactual_group_id`, and branch fields even before RL so paired traces can be added without changing the data model;
+- compare alternative factual bodies such as outcome-only versus context-action-outcome.
 
 Acceptance criteria:
 
-- every compact fact resolves to agent-visible detailed evidence;
+- records contain only agent-visible evidence;
 - no inferred advice enters the factual layer;
-- hidden evaluator fields never enter memory.
+- hidden evaluator fields never enter memory;
+- no-memory, full-history, and read-all factual-memory conditions run end to end;
+- the team can state which factual fields appear useful or harmful.
 
-### Phase 2: factual retrieval and hierarchical drill-down
+### Phase 2: split core facts from detailed evidence
 
 Tasks:
 
-- implement no-memory, full-history, compact-fact, detailed-only, and hierarchical-fact conditions;
-- retrieve before the first strategic decision;
+- introduce `DetailedFact` and compact `FactualMemory` only after Phase 1 informs the split;
+- migrate or adapt Phase 1 records without losing source references;
+- add provenance validation;
 - implement `OPEN_DETAILED_FACT` or equivalent;
-- measure retrieval and drill-down cost;
+- compare single-layer facts with compact facts plus supporting detail;
 - add conflict and drift cases.
 
 Acceptance criteria:
 
-- identical trajectory files are reused across conditions;
-- the system can identify when a factual summary is insufficient;
-- performance and cost differences are interpretable;
-- Stage A results are reviewed before cognitive-memory work begins.
+- every compact fact resolves to agent-visible detailed evidence;
+- the hierarchy provides a clear benefit in ambiguity resolution, auditability, or context cost;
+- identical trajectory files are reused across conditions.
 
-### Phase 3: handwritten cognition and paired regression
+### Phase 3: retrieval scaling, only if needed
+
+Tasks:
+
+- keep read-all as the primary baseline;
+- add ranking, top-k, or budgets only if memory volume causes measurable interference or cost;
+- compare task-start and decision-time retrieval;
+- measure retrieval errors separately from memory-content errors.
+
+Acceptance criteria:
+
+- the need for selective retrieval is demonstrated empirically rather than assumed;
+- deterministic retrieval baselines precede learned retrieval.
+
+### Phase 4: handwritten cognition and paired regression
 
 Tasks:
 
@@ -1223,7 +1471,7 @@ Acceptance criteria:
 - useful and harmful cognition can be distinguished;
 - contradictory facts can override cognition at invocation time.
 
-### Phase 4: LLM hypothesis generation and cognitive lifecycle
+### Phase 5: LLM hypothesis generation and cognitive lifecycle
 
 Tasks:
 
@@ -1241,7 +1489,7 @@ Acceptance criteria:
 - each use decision records applicability reasoning and evidence access;
 - cognitive memory never replaces its factual provenance.
 
-### Phase 5: generalization and learned policy
+### Phase 6: generalization and learned policy
 
 Tasks:
 
@@ -1273,7 +1521,10 @@ Tasks:
 - deterministic Number Guessing recording works;
 - compact facts can be retrieved;
 - detailed drill-down returns the correct source record;
+- every decision trace preserves the complete candidate-memory set and the selected subset;
+- paired factual-memory or cognition branches share an identical prefix and suffix configuration;
 - paired cognition regression produces two branch results and one effect record;
+- suffix and paired marginal rewards are computed from the correct intervention point;
 - reporting can load results without breaking existing output.
 
 ### Failure behavior
@@ -1293,12 +1544,180 @@ Only begin RL after the staged agentic experiments reveal a specific bottleneck.
 
 LatentGym's existing cross-task RL should be reused as infrastructure and as a full-history RL baseline, but it does not by itself define explicit memory actions.
 
-
 For the first RL experiments, do **not** include permanent deletion as an action. The archive remains append-only. Learned actions should control retrieval, drill-down, applicability, ranking, status, and validation. If a memory is obsolete, the policy may mark or down-rank it, but the evidence remains recoverable.
 
-### 20.1 Candidate RL problem A: factual routing and drill-down
+### 20.1 Two synchronized traces
 
-This is a natural first target if factual memory already improves performance.
+Every rollout should preserve two linked traces.
+
+Task trace:
+
+```text
+observation
+    -> task action
+    -> environment feedback
+    -> task reward
+```
+
+Memory trace:
+
+```text
+concrete decision context
+    -> all memory candidates available at that moment
+    -> memory action
+    -> exact memory rendered to the task agent
+    -> task-agent action
+    -> immediate and delayed outcome
+```
+
+The memory trace is required even when the memory policy is deterministic or prompted. The agentic phase is the data-collection phase for later RL.
+
+### 20.2 Data that must be logged before RL begins
+
+At every memory decision point, record:
+
+1. current concrete decision context, not only the full task prompt;
+2. every candidate factual memory, detailed record, and cognition available to the policy;
+3. selected and unselected memory IDs;
+4. provenance links for every candidate and selected memory;
+5. the memory action, such as read all, read none, retrieve a subset, or open detail;
+6. the exact text or structured conditioning shown to the task agent;
+7. the task action after memory conditioning;
+8. any claimed memory citations from the task agent;
+9. whether drill-down changed the task action;
+10. immediate reward, suffix reward, and full sequence reward;
+11. memory tokens, retrieval calls, detailed-fact calls, and latency when available;
+12. counterfactual group, branch, prefix snapshot, trajectory, latent-session, and seed IDs;
+13. model ID, sampling configuration, prompt version, and code commit.
+
+The most important logging rule is:
+
+> Save the complete candidate set, not only the memories that were retrieved.
+
+Otherwise later training cannot distinguish selection quality from candidate-generation quality.
+
+### 20.3 Paired and multi-branch traces
+
+Absolute task reward is noisy because it also reflects task difficulty and task-agent ability. Prefer common-prefix counterfactual branches whenever affordable.
+
+```text
+same prefix, same factual archive, same suffix tasks
+                      |
+        +-------------+-------------+
+        |             |             |
+     no memory     read facts    open detail / use cognition
+        |             |             |
+   suffix reward  suffix reward  suffix reward
+```
+
+For paired traces:
+
+```text
+Delta R(a) = R_suffix(memory action a) - R_suffix(reference action)
+```
+
+For GRPO-style grouped traces, sample `K` memory actions from the same state and compare their suffix returns within the group. Candidate actions may include:
+
+- read no facts;
+- read all currently available facts;
+- retrieve a specified subset;
+- open one detailed record;
+- use or ignore one cognition.
+
+Branches should reuse the same task-agent checkpoint and suffix trajectory. If environment replay diverges before the intended memory intervention, discard the group.
+
+### 20.4 Reward hierarchy
+
+Use the simplest reward that answers the current question, then add terms only when the corresponding failure appears.
+
+#### Level 1: suffix task reward
+
+The first usable reward is the cumulative task reward after the memory action:
+
+```text
+R_suffix = sum of task rewards after the memory decision
+```
+
+Do not include rewards that occurred before the memory action because they cannot be causally affected by it.
+
+#### Level 2: paired marginal reward
+
+When a counterfactual branch is available:
+
+```text
+R_marginal = R_suffix(with chosen memory action)
+             - R_suffix(reference memory action)
+```
+
+This is the preferred signal for learning memory contribution because it controls for the shared trajectory prefix and suffix difficulty.
+
+#### Level 3: group-relative reward
+
+For `K` branches from the same memory state, normalize or rank returns within the group, following the logic of GRPO. This is useful when several subsets or drill-down actions must be compared.
+
+#### Level 4: retrieval and context costs
+
+Only after factual memory is demonstrably useful and cost becomes a real bottleneck, use:
+
+```text
+R = R_marginal
+    - lambda_ctx * memory_token_count
+    - lambda_retrieve * retrieval_call_count
+    - lambda_detail * detailed_fact_call_count
+    - lambda_latency * retrieval_latency
+```
+
+Disk-storage volume is not penalized in the initial formulation.
+
+#### Level 5: memory-induced harm
+
+Track regression explicitly:
+
+```text
+harm = max(0, R_suffix(reference) - R_suffix(with memory))
+```
+
+A conservative objective may be:
+
+```text
+R_safe = R_marginal - lambda_harm * harm
+```
+
+Also report harm rate and severe-harm rate independently. Do not allow a small average gain to hide rare but large failures caused by toxic memory.
+
+#### Provenance as a hard constraint
+
+Do not add a small reward for including a source ID. Require valid provenance structurally:
+
+```text
+missing or invalid provenance -> reject the memory action
+```
+
+This prevents reward hacking through decorative but meaningless citations.
+
+### 20.5 Recommended RL smoke test
+
+Before training a rich router, verify the entire RL pipeline with a binary memory action:
+
+State:
+
+```text
+current first-guess decision
++ all factual memories accumulated so far
+```
+
+Actions:
+
+```text
+READ_FACTS
+DO_NOT_READ_FACTS
+```
+
+Run both branches from the same trajectory prefix and train from suffix or paired marginal reward. This is an integration test for rollout generation, memory actions, reward assignment, and GRPO. It is not necessarily the final research formulation.
+
+### 20.6 Candidate RL problem A: factual routing and drill-down
+
+This becomes a primary research target only if factual memory already improves performance and either selective presentation or drill-down remains unreliable. Large archive scale is one possible motivation, but not the only one: even a small store may contain conflicting or ambiguous facts.
 
 State:
 
@@ -1306,27 +1725,54 @@ State:
 - available factual summaries;
 - links to detailed records;
 - contradiction and uncertainty signals;
-- retrieval/context budget;
+- optional retrieval/context budget after scale becomes relevant;
 - prior use statistics.
 
 Actions:
 
+- read all facts;
+- read no facts;
 - retrieve factual-memory IDs;
 - open a detailed fact;
 - stop retrieving and act.
 
 Reward:
 
-```text
-task reward
-- factual retrieval cost
-- detailed drill-down cost
-- memory-induced harm
-```
+- suffix or paired marginal task reward;
+- later, factual retrieval and detailed drill-down cost;
+- explicit memory-induced harm.
 
 This trains when to rely on summaries and when to inspect evidence.
 
-### 20.2 Candidate RL problem B: cognition applicability
+### 20.7 Candidate RL problem B: factual writing and core/detail placement
+
+Because durable storage is abundant, the initial writing problem is not permanent deletion. It is whether an observed event should become a compact default fact, remain only as detailed evidence, or be omitted from routine presentation while preserving its source transcript.
+
+State:
+
+- current visible interaction fragment;
+- existing factual records;
+- source reliability and event type;
+- current episode and decision context.
+
+Actions:
+
+- create compact fact plus detailed evidence;
+- keep as detailed evidence only;
+- merge source references into an existing factual record;
+- do not promote into the default factual-memory presentation.
+
+Required trace:
+
+- raw visible interaction;
+- all candidate factual formulations;
+- selected storage representation;
+- future decisions where the fact was available, retrieved, or used;
+- paired downstream value when measured.
+
+This problem has long delayed credit. Prefer agentic labels or SFT warm-start before online RL.
+
+### 20.8 Candidate RL problem C: cognition applicability
 
 State:
 
@@ -1346,11 +1792,11 @@ Actions:
 
 Reward:
 
-- downstream task reward;
+- downstream suffix or paired marginal task reward;
 - minus harm caused by incorrect transfer;
-- minus retrieval and drill-down cost.
+- later, retrieval and drill-down cost.
 
-### 20.3 Candidate RL problem C: cognitive promotion
+### 20.9 Candidate RL problem D: cognitive promotion
 
 State:
 
@@ -1373,9 +1819,10 @@ Reward:
 
 - paired downstream improvement;
 - minus cognition-induced harm;
-- minus validation, retrieval, and context cost; no penalty for durable disk retention in the initial formulation.
+- later, validation, retrieval, and context cost;
+- no penalty for durable disk retention in the initial formulation.
 
-### 20.4 Candidate RL problem D: regression-test selection
+### 20.10 Candidate RL problem E: regression-test selection
 
 State:
 
@@ -1396,47 +1843,59 @@ Reward:
 - future downstream reward;
 - minus test cost.
 
-### 20.5 Selecting the first RL target
+### 20.11 Selecting the first substantive RL target
 
 Use experimental evidence:
 
-- if compact facts help but retrieval/drill-down is inefficient, train factual routing;
+- if facts help but the agent inconsistently decides whether to read them, train factual use or routing;
+- if summaries help but ambiguity handling fails, train drill-down;
+- if useful events are poorly represented, train factual writing or core/detail placement;
 - if correct cognition helps but context transfer is unsafe, train applicability checking;
 - if candidate quality is adequate but promotion is unreliable, train promotion/rejection;
 - if validation is too expensive, train experiment selection.
 
 Do not jointly train task policy, retrieval, summarization, cognition generation, and validation in the first RL experiment.
 
-### 20.6 Offline data from the agentic phase
+### 20.12 Offline data from the agentic phase
 
-Records may include:
+The agentic system should produce records of the form:
 
 ```text
-current decision
-retrieved factual summaries
-opened detailed facts
-candidate cognition
-supporting and contradictory evidence
-with/without cognition rollouts
-paired effect
-harm tags
-applicability decision
-final memory status
+decision context
++ complete candidate-memory set
++ provenance graph
++ chosen memory action
++ exact memory shown to the task agent
++ task-agent behavior
++ immediate and suffix outcomes
++ paired counterfactual outcome when available
++ costs and harm tags
 ```
 
 Use these data for:
 
-- supervised routing or ranking;
+- supervised factual writing, routing, or ranking;
 - value-model training;
+- preference or pairwise training over memory actions;
 - offline policy learning;
 - warm-starting sequence-level RL.
 
-### 20.7 Online sequence-level RL
+A practical sequence is:
+
+```text
+agentic traces
+    -> rule- or regression-derived labels
+    -> SFT / preference warm start
+    -> sequence-level RL on downstream reward
+```
+
+### 20.13 Online sequence-level RL
 
 Possible explicit actions at decision or episode boundaries:
 
 ```text
 <MEMORY_ACTION>
+READ_ALL_FACTS
 RETRIEVE_FACT f12
 OPEN_DETAILED_FACT df7
 USE_COGNITION h1
@@ -1445,9 +1904,7 @@ REVISE_SCOPE h3 current_session_only
 </MEMORY_ACTION>
 ```
 
-Prefer freezing the task agent or training a small router/adapter so improvements are attributable to memory policy.
-
----
+Prefer freezing the task agent or training a small router/adapter so improvements are attributable to memory policy. If the same LLM performs task and memory actions, separately log log-probabilities and rewards for the memory-action tokens wherever the training infrastructure permits.
 
 ## 21. Later Differentiable-Memory Extension
 
@@ -1546,18 +2003,27 @@ Do not propose RL, cognition generation, or task-environment changes.
 After reviewing Task 1:
 
 ```text
-Implement only the detailed factual record and compact factual memory pipeline for Number Guessing.
+Implement only a minimal single-layer factual-memory baseline for Number Guessing.
 
 Requirements:
+- define one FactualRecord containing context, action, observed outcome, and source references;
 - use agent-visible transcript content only;
-- deterministic extraction and summarization;
+- deterministic extraction;
 - append-only JSON/JSONL storage;
-- complete detailed-to-summary provenance;
+- show all accumulated factual records to the next episode while the store is small;
+- no separate detailed/summary hierarchy yet;
+- no top-k retrieval or retrieval budget;
 - no cognitive memory;
 - no RL;
-- no learned retriever;
 - preserve existing LatentGym results and add optional memory metadata;
-- add tests for leakage, provenance, serialization, and factual-language constraints.
+- add tests for leakage, serialization, source references, and factual-language constraints.
+
+Also produce a short analysis comparing candidate factual schemas:
+1. outcome only;
+2. context + action + outcome;
+3. failures/surprises only;
+4. all externally verified events.
+Do not choose a learned retrieval mechanism.
 ```
 
 ---
@@ -1568,14 +2034,16 @@ Requirements:
 
 The first MVP succeeds if:
 
-1. detailed factual records preserve agent-visible evidence;
-2. compact factual memories are traceable to detailed records;
-3. factual memory can replace raw history in a controlled condition;
-4. the task agent can selectively open detailed records;
-5. performance, token cost, and harm can be compared against no memory and full history;
-6. failures can be assigned to recording, summarization, retrieval, drill-down, or utilization.
+1. a minimal factual record stores only agent-visible events with source references;
+2. all accumulated facts can be presented without a retrieval algorithm;
+3. factual memory can be compared with no memory and full history;
+4. alternative factual schemas reveal what information is useful, redundant, or harmful;
+5. failures can be assigned to fact selection, representation, or utilization;
+6. the result informs whether a separate detailed-evidence layer is needed.
 
-The factual MVP does **not** require cognitive memory, regression testing of cognition, or RL.
+A later Stage A extension succeeds if compact core facts remain traceable to detailed records and selective drill-down resolves ambiguity.
+
+The factual MVP does **not** require a two-layer factual hierarchy, retrieval ranking, cognitive memory, regression testing of cognition, or RL.
 
 ### Stage B cognitive extension
 
@@ -1597,9 +2065,10 @@ The project does not need to prove that Number Guessing transfers directly to co
 
 ### Factual memory
 
-- Does compact factual memory improve over no memory?
-- Can it match full history at lower token cost?
-- Which factual granularity is useful: episode outcome, full action sequence, or both?
+- Which observed events deserve promotion into the default factual-memory presentation?
+- Does a small read-all factual memory improve over no memory?
+- Can it match full history without first optimizing retrieval?
+- Which factual granularity is useful: episode outcome, context-action-outcome, failures/surprises, or a hybrid?
 - When does a compact summary become too ambiguous?
 - Can the task agent reliably decide when to open a detailed record?
 - Is first-decision retrieval sufficient, or are later decision points necessary?
