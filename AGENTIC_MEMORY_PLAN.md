@@ -84,6 +84,29 @@ The design deliberately keeps two forms of validation:
 
 These are complementary. Passing a regression suite does not make a cognition universally correct.
 
+
+### Storage assumption: retain broadly, retrieve selectively
+
+For the initial agentic system, persistent disk capacity is **not** treated as the primary bottleneck. The system should prefer retaining evidence over making irreversible deletion decisions.
+
+Operational assumptions:
+
+- detailed factual records are append-only and retained on durable storage;
+- compact factual memories are indexes and decision-oriented summaries, not replacements created to save disk space;
+- physical deletion is out of scope for the initial experiments and the first RL formulation;
+- correction, invalidation, and forgetting are implemented as metadata operations such as `corrected`, `obsolete`, `stale`, `retracted`, `cold`, or lower retrieval priority;
+- no provenance record is silently destroyed;
+- the scarce resources are **retrieval quality, context-window bandwidth, latency, tool calls, and attention**, not bytes on disk.
+
+Accordingly, the central routing problem is not “which memories should be permanently erased?” It is:
+
+```text
+Given a large retained archive, which compact facts or cognitions should be surfaced
+for this concrete decision, and when should the agent open the detailed evidence?
+```
+
+Storage size may still be reported for engineering completeness, but it should not drive the initial research objective or reward function.
+
 ---
 
 ## 2. Main Research Questions
@@ -162,7 +185,7 @@ Do not assume the answer in advance. Use the agentic system to determine whether
 - generating candidate cognitions;
 - promoting, rejecting, or revising cognition;
 - deciding whether to use a cognition for the current decision;
-- forgetting or invalidating stale cognition;
+- de-prioritizing, marking stale, or invalidating cognition without deleting its evidence;
 - selecting regression tests.
 
 ---
@@ -951,6 +974,9 @@ Use these logs to support:
 - rebuilding cognition from the factual stores;
 - marking stale or obsolete facts without destroying the audit trail.
 
+
+The initial system never physically deletes a detailed factual record. A fact or cognition that should no longer influence decisions is marked, down-ranked, moved to cold storage, or excluded from default retrieval while remaining available for audit and reconstruction.
+
 ---
 
 ## 14. Experimental Conditions by Stage
@@ -1010,9 +1036,11 @@ Key ablations:
 
 ### Factual-memory pilot
 
+Use one complete retained archive per trajectory across all conditions. Experimental limits apply to what is retrieved or placed in context, not to what is stored on disk.
+
 - 30 to 50 trajectories per condition;
 - fixed trajectory files shared across conditions;
-- several memory budgets;
+- several retrieval/context budgets while retaining the same underlying archive;
 - at least one stationary and one drift/conflict setting;
 - complete Stage A before enabling automatic cognitive memory.
 
@@ -1230,6 +1258,7 @@ Tasks:
 
 - detailed records contain only agent-visible content;
 - stores serialize and deserialize exactly;
+- append-only stores preserve records after correction, staleness, retraction, and archival status changes;
 - factual memories reference valid detailed facts;
 - cognitions reference valid factual memories;
 - decision traces reference valid loaded memories;
@@ -1264,6 +1293,9 @@ Only begin RL after the staged agentic experiments reveal a specific bottleneck.
 
 LatentGym's existing cross-task RL should be reused as infrastructure and as a full-history RL baseline, but it does not by itself define explicit memory actions.
 
+
+For the first RL experiments, do **not** include permanent deletion as an action. The archive remains append-only. Learned actions should control retrieval, drill-down, applicability, ranking, status, and validation. If a memory is obsolete, the policy may mark or down-rank it, but the evidence remains recoverable.
+
 ### 20.1 Candidate RL problem A: factual routing and drill-down
 
 This is a natural first target if factual memory already improves performance.
@@ -1274,7 +1306,7 @@ State:
 - available factual summaries;
 - links to detailed records;
 - contradiction and uncertainty signals;
-- memory/token budget;
+- retrieval/context budget;
 - prior use statistics.
 
 Actions:
@@ -1302,7 +1334,7 @@ State:
 - candidate cognition and tested scope;
 - supporting and counterevidence facts;
 - optional detailed records;
-- memory budget.
+- retrieval/context budget.
 
 Actions:
 
@@ -1341,7 +1373,7 @@ Reward:
 
 - paired downstream improvement;
 - minus cognition-induced harm;
-- minus validation cost and memory cost.
+- minus validation, retrieval, and context cost; no penalty for durable disk retention in the initial formulation.
 
 ### 20.4 Candidate RL problem D: regression-test selection
 
@@ -1589,6 +1621,6 @@ The project does not need to prove that Number Guessing transfers directly to co
 - Is the first meaningful learned action retrieval, drill-down, applicability checking, promotion, or test selection?
 - Can the task agent remain frozen while a small memory router is trained?
 - Should reward use absolute downstream performance or paired memory contribution?
-- How should retrieval and detailed-evidence costs be priced?
+- How should retrieval, context, latency, and detailed-evidence costs be priced when durable storage is treated as abundant?
 
 These questions are outputs of the staged experiments, not assumptions to settle in advance.
