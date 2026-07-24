@@ -617,7 +617,7 @@ No rule is asserted yet.
 }
 ```
 
-A plausible but potentially toxic cognition is:
+An **optional** handwritten toxic cognition (diagnostic only; not required for the default harm baseline) is:
 
 ```json
 {
@@ -634,9 +634,11 @@ A plausible but potentially toxic cognition is:
 }
 ```
 
+Default harm evidence instead comes from **LLM-distilled skills** that overgeneralize or negate useful session structure (see Pilot 2 `skill_only_llm`).
+
 ### 5.4 Invocation-time conflict example
 
-Suppose `h2` passed a small early test, but the factual store later contains:
+Suppose `h2` (or an equivalently wrong distilled lesson) passed a small early test, but the factual store later contains:
 
 ```text
 Episode 4 target was 137.
@@ -1060,8 +1062,9 @@ The Hermes labels refer to the system pattern of persistent memory plus skills a
 - In the real Hermes Agent product, skills are primarily **agent-distilled**: after tasks, the agent writes or revises procedural `SKILL.md`-like artifacts (humans may also author or approve skills).
 - In LatentGym Pilot 2, prefer the same *information pattern* (skill without facts vs facts plus skill) under a transparent adaptation:
   1. **Proxy skill (optional first step):** a deterministic, experimenter-written template filled only from agent-visible outcomes — useful for plumbing and a lower bound, but **not** Hermes distillation.
-  2. **Closer Hermes adaptation:** after each episode or prefix, prompt an LLM to write a short lesson / skill from the agent-visible transcript or outcomes, then inject that text alone (`skill_only`) or with facts (`facts_plus_skill`).
-- Do not report a deterministic template skill as “Hermes Agent” or as evidence about Hermes’s autonomous learning loop. Label results as `skill_only` / `facts_plus_skill` under a LatentGym Hermes-pattern adaptation, and state whether the skill text was templated or LLM-distilled.
+  2. **Default / closer Hermes adaptation:** after each episode or prefix, prompt an LLM to write a short lesson / skill from the agent-visible transcript or outcomes, then inject that text alone (`skill_only_llm`) or with facts (`facts_plus_skill_llm`).
+- **Harm / brittleness baseline:** do **not** require handwritten “toxic cognition” injects. Prefer market-style LLM distillation/extraction; measure harm when distilled skills underperform facts-only or give anti-useful advice (organic soft toxicity). Handwritten toxic rules remain optional diagnostics only.
+- Do not report a deterministic template skill as “Hermes Agent” or as evidence about Hermes’s autonomous learning loop. Label results as `skill_only` / `facts_plus_skill` (template) or `*_llm` (distilled) under a LatentGym Hermes-pattern adaptation.
 
 The early atomic-fact baseline is deliberately framework-independent. A **faithful Mem0 system baseline** is deferred until retrieval scale becomes relevant. That later baseline should preserve Mem0's own extraction and query-based top-k or hybrid retrieval behavior, rather than stripping away the features that distinguish the system.
 
@@ -1235,11 +1238,11 @@ Return JSON only.
 
 ### Initial debugging order
 
-1. Test one handwritten useful cognition.
-2. Test one handwritten plausible-but-wrong cognition.
-3. Confirm that facts plus invocation-time checking can expose contradictions.
-4. Confirm that the regression harness distinguishes benefit from harm.
-5. Only then enable automatic LLM hypothesis generation.
+1. Run LLM-distilled Hermes-pattern skills (`skill_only_llm`, optionally `facts_plus_skill_llm`) and inspect organic failures.
+2. Confirm that facts plus skill reduce brittle use relative to skill-only when the distilled lesson conflicts with evidence.
+3. Confirm that the regression / paired harness can distinguish benefit from harm using distilled skills as the harmful arm when needed.
+4. Handwritten useful / toxic cognitions are optional diagnostics only.
+5. Only then invest in structured automatic LLM hypothesis generation (Stage B lifecycle).
 
 ---
 
@@ -1527,7 +1530,7 @@ Minimum set:
 5. facts plus regression-validated cognition;
 6. validated cognition plus invocation-time fact checking;
 7. oracle cognition;
-8. toxic cognition.
+8. LLM-distilled skill / experience as the default harmful or brittle arm (handwritten toxic cognition optional).
 
 Key ablations:
 
@@ -1569,9 +1572,10 @@ Use one complete retained archive per trajectory across all conditions.
 
 - use the same factual-memory pipeline;
 - several prefix lengths `k`;
-- handwritten good and toxic cognitions first;
-- paired regression suffixes;
-- LLM-generated cognition only after the harness is verified.
+- start from Pilot 2 LLM-distilled skills as the market-style experience / soft-toxicity baseline;
+- paired regression suffixes when comparing facts-only vs facts-plus-distilled-skill (or later structured cognition);
+- handwritten good/toxic cognitions optional if a controlled diagnostic is needed;
+- structured LLM hypothesis generation only after the harness is verified.
 
 ### Main stage
 
@@ -1760,23 +1764,23 @@ Acceptance criteria:
 - deterministic retrieval baselines precede learned retrieval;
 - the faithful Mem0 comparison is reported as an end-to-end system baseline, not confused with the atomic-fact representation ablation.
 
-### Phase 4: handwritten cognition and paired regression
+### Phase 4: distilled-skill harm baseline and paired regression
 
 Tasks:
 
-- add one useful and one toxic handwritten cognition;
-- link each to factual support;
-- implement common-prefix replay or forking;
-- run facts-only versus facts-plus-cognition suffixes;
-- compute paired metrics;
-- test invocation-time conflict handling.
+- treat LLM-distilled Hermes-pattern skills as the default harmful / brittle arm (already started in Pilot 2);
+- implement common-prefix replay or forking when paired suffixes are needed;
+- run facts-only versus facts-plus-distilled-skill (and later facts-plus-cognition) suffixes;
+- compute paired metrics; report harm when skill-only underperforms facts-only;
+- test that contradictory facts / facts-plus-skill can override a bad distilled lesson at decision time;
+- handwritten useful/toxic cognitions remain **optional** diagnostics, not a required phase gate.
 
 Acceptance criteria:
 
-- both branches receive identical facts;
-- only treatment receives cognition;
-- useful and harmful cognition can be distinguished;
-- contradictory facts can override cognition at invocation time.
+- both branches receive identical facts when comparing facts vs facts-plus-skill/cognition;
+- only treatment receives the skill or cognition;
+- useful vs harmful experience can be distinguished using distilled skills (organic soft toxicity);
+- contradictory facts can override bad lessons at invocation time when that check is enabled.
 
 ### Phase 5: LLM hypothesis generation and cognitive lifecycle
 

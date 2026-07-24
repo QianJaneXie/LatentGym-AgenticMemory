@@ -13,7 +13,9 @@
 | `skill_only` / `facts_plus_skill` | Experimenter **template** | Proxy pattern only |
 | `skill_only_llm` / `facts_plus_skill_llm` | **Same task LLM** distills a lesson after each episode from agent-visible outcomes | Closer Hermes adaptation |
 
-Neither is a full Hermes Agent integration. Neither is toxic cognition.
+Neither is a full Hermes Agent integration.
+
+**Harm baseline decision:** do not require handwritten toxic cognition. Default “soft toxicity” comes from market-style **LLM-distilled skills** (e.g. `skill_only_llm` underperforming `episodic_only`, or advice that discards useful session structure). Handwritten toxic rules stay optional diagnostics only; see `AGENTIC_MEMORY_PLAN.md` Phase 4 / §8.2.
 
 LLM distillation flow:
 
@@ -96,4 +98,4 @@ python experiments/memory/run_baselines.py \
 
 On this single seed, flat LLM notes beat `no_memory` but are **slightly worse** than dense context–action–outcome (`episodic_only`) and roughly match / slightly under `outcome_only`. Qualitatively, notes lose episode binding (e.g. “the number was less than 669” without which episode), so past targets can blur across games. Full Mem0 top-k retrieval is still deferred.
 
-On this single seed, LLM-distilled skill **alone** is weaker than the proxy template and far below dense facts (`episodic_only` 6.14). Facts + LLM skill also does not beat dense facts alone. Distilled texts live in `memory.distilled_skill_history`; flat notes in `memory.flat_memories`.
+On this single seed, LLM-distilled skill **alone** is weaker than the proxy template and far below dense facts (`episodic_only` 6.14). Facts + LLM skill also does not beat dense facts alone. Distilled texts live in `memory.distilled_skill_history` (inspect there for organic soft-toxicity examples); flat notes in `memory.flat_memories`.
