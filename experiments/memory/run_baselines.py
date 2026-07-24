@@ -38,14 +38,13 @@ PILOT2_CONDITIONS = (
     "atomic_flat_llm",
 )
 
-# Bandits Pilot 3: prior baselines + reconciled current view
+# Bandits pilot defaults (no reconciled_view — that MVP was removed as not true reconciliation)
 BANDITS_PILOT_CONDITIONS = (
     "no_memory",
     "full_history",
     "outcome_only",
     "episodic_only",
     "oracle_summary",
-    "reconciled_view",
     "atomic_flat_llm",
     "skill_only_llm",
     "facts_plus_skill_llm",
@@ -126,11 +125,6 @@ async def run_condition(
         (memory_out / f"traj_{i:04d}_decisions.json").write_text(
             json.dumps(mem.get("decisions", []), indent=2)
         )
-        if mem.get("reconciled_views"):
-            (memory_out / f"traj_{i:04d}_reconciled_views.json").write_text(
-                json.dumps(mem.get("reconciled_views", []), indent=2)
-            )
-
         summaries.append(
             {
                 "trajectory_id": traj_path.stem,

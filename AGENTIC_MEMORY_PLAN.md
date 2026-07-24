@@ -15,7 +15,7 @@
 | Phase 0 | `AGENTIC_MEMORY_PHASE0_NOTE.md` | Done |
 | Pilot 1 / eng. Phase 1 (factual utility) | `AGENTIC_MEMORY_PHASE1_NOTE.md` | Done on `range_100` / `traj_000` (7 ep, GPT-5.6) |
 | Pilot 2 (flat extract + Hermes-pattern skills) | `AGENTIC_MEMORY_PHASE2_NOTE.md` | Done on same seed (not eng. Phase 2) |
-| Pilot 3 / eng. **Phase 2** (fact reconciliation) | `AGENTIC_MEMORY_PHASE3_NOTE.md` | **In progress** on Bandits/`hot_hand` (MVP `reconciled_view`) |
+| Pilot 3 / eng. **Phase 2** (fact reconciliation) | `AGENTIC_MEMORY_PHASE3_NOTE.md` | Bandits append-only pilot done; **true reconciliation not started** (latest-best MVP removed) |
 | Eng. Phase 3+ (retrieval scale, cognition, RL) | — | Not started |
 
 Do not confuse **Pilot 2** (representation / skill baselines) with engineering **Phase 2** (reconciliation).
@@ -807,7 +807,9 @@ class CurrentFactView:
 ```
 
 The current view is rebuildable from the append-only claims, relations, and
-source evidence. It is never the only surviving representation.
+source evidence. It is never the only surviving representation. It must reflect
+claim-status and open relations from §8 operations — not a hand-authored
+“latest session state / superseded list” template (see §8.0).
 
 ### 6.5 `CognitiveMemory`
 
@@ -1077,6 +1079,20 @@ reconciliation answers “how should multiple claims coexist after new evidence
 arrives?” This is the main addition required to move from merely recording facts
 to **clarifying facts**.
 
+### 8.0 What reconciliation is not
+
+Reconciliation is **claim maintenance**, not a prettier summary of the store.
+
+Do **not** treat the following as reconciliation (a discarded Bandits MVP did this):
+
+- picking the “ACTIVE latest revealed best” (or any single session-state field) and listing older values as SUPERSEDED;
+- collapsing explore/outcome history into a dashboard that implies “select the active best now”;
+- any presentation layer that skips duplicate / conflict / correction / unresolved classification.
+
+Organic Bandits `hot_hand` flips create *pressure* from stale latest-best claims, but alone they do not exercise the §8.3 suite. Pilot 3 must use **controlled cases** (plus optional LLM-extraction noise) before claiming a reconciliation win.
+
+`CurrentFactView` is a rebuildable projection of claim statuses and open relations — not a hand-authored “latest best + superseded” template.
+
 ### 8.1 Reconciliation operations
 
 At each episode boundary or maintenance pass:
@@ -1129,14 +1145,20 @@ The initial test suite should include:
 
 ### 8.4 Deterministic first implementation
 
-For Number Guessing, reconciliation should initially be deterministic:
+Reconciliation should initially be deterministic on **controlled claim suites**
+(NG and/or Bandits fixtures), not on organic task runs alone:
 
 - episode identity is defined by `trajectory_id + episode_idx`;
-- target claims for different episodes are separate events even when values match;
-- incompatible target claims for the same episode are contradictions;
-- an environment-verified revealed target outranks an unverified extracted guess;
+- claims for different episodes are separate events even when values match
+  (NG targets; Bandits revealed bests / select outcomes);
+- incompatible claims for the same episode (or same scoped subject) are contradictions;
+- an environment-verified revealed outcome outranks an unverified extracted guess;
 - no conflicting record is deleted;
-- the active view selects the verified claim and marks the other claim disputed or corrected;
+- the active view selects verified claims where rules allow, else leaves the conflict
+  explicitly unresolved / disputed;
+- supersession applies only when a claim’s *valid time / scope* ends (e.g. a later
+  verified revealed best for the same session-state subject), and must still keep
+  prior claims as historical evidence — not as a UI label alone;
 - all decisions and status changes retain source IDs.
 
 An LLM-based reconciliation agent may be added only after this deterministic
@@ -1371,17 +1393,23 @@ Do not run every baseline in the first sweep.
 
 A faithful Mem0 system comparison is not part of this pilot. Add it later only when memory volume makes query-based retrieval meaningful.
 
-**Pilot 3: test fact reconciliation and why provenance matters** — **next** (engineering Phase 2)
+**Pilot 3: test fact reconciliation and why provenance matters** — **partial** (engineering Phase 2)
 
-10. append-only facts without reconciliation;
+Bandits/`hot_hand` append-only baselines are recorded in `AGENTIC_MEMORY_PHASE3_NOTE.md`
+(dense/flat facts help; skill interaction mixed). A discarded latest-best
+`reconciled_view` is **not** part of this pilot.
+
+Still to run for reconciliation proper:
+
+10. append-only facts without reconciliation (control; Bandits `episodic_only` already fills this role organically);
 11. reconciled facts with deterministic duplicate/conflict/correction handling;
 12. reconciled facts plus unresolved-case drill-down;
 13. compact facts without details;
 14. compact facts plus always-open details;
 15. compact facts plus selective drill-down;
-16. conflict, ambiguity, noise, correction, and latent-drift cases.
+16. conflict, ambiguity, noise, correction, and latent-drift **controlled cases** (§8.3).
 
-Number Guessing rarely produces natural claim conflicts under clean deterministic extraction; Pilot 3 should use **controlled cases** (§8.3) plus organic noise from LLM flat extraction. Same-value targets in different episodes must stay distinct events, not merges.
+Number Guessing rarely produces natural claim conflicts under clean deterministic extraction; Bandits organic flips are also insufficient alone. Pilot 3 reconciliation arms must use **controlled cases** plus organic noise from LLM flat extraction. Same-value events in different episodes must stay distinct, not merges.
 
 Only after these pilots should the project add cognitive-memory formation and RL.
 
@@ -1964,11 +1992,15 @@ Acceptance criteria: met for the single-seed pilot (agent-visible-only records; 
 
 ### Phase 2: fact reconciliation and split core facts from detailed evidence — **next** (Pilot 3)
 
+Status: Bandits append-only pilot exists; discarded “ACTIVE latest-best” MVP removed
+(see §8.0 and `AGENTIC_MEMORY_PHASE3_NOTE.md`). Claim-level reconciliation is still open.
+
 Tasks:
 
 - introduce deterministic claim identity and reconciliation before any LLM-based maintenance;
-- add `FactClaim`, `FactRelation`, and rebuildable `CurrentFactView`;
-- test duplicate reports, repeated values in different episodes, genuine contradictions, corrections, refinements, and supersession (§8.3 controlled cases; NG will not spontaneously generate most conflicts);
+- add `FactClaim`, `FactRelation`, and rebuildable `CurrentFactView` as a **projection of claim ops**, not a latest-best template;
+- ship unit/fixture tests for §8.3 before any new task-agent baseline named `reconciled_*`;
+- test duplicate reports, repeated values in different episodes, genuine contradictions, corrections, refinements, and supersession (controlled cases; NG/Bandits organic runs will not spontaneously cover most conflicts);
 - introduce `DetailedFact` and compact `FactualMemory` only if Pilot 1–2 evidence justifies the split (dense single-layer CAO may remain sufficient on this toy);
 - migrate or adapt Phase 1 records without losing source references;
 - add provenance validation;
@@ -1984,7 +2016,8 @@ Acceptance criteria:
 - the current factual view can be rebuilt deterministically from the append-only store;
 - every compact fact (if introduced) resolves to agent-visible detailed evidence;
 - hierarchy is justified by ambiguity resolution, auditability, or context cost — not added by default;
-- identical trajectory files are reused across conditions.
+- identical trajectory files are reused across conditions;
+- no baseline that only rewrites “latest session state” is reported as reconciliation.
 
 ### Phase 3: retrieval scaling, only if needed
 

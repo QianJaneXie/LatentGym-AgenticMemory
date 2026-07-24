@@ -99,11 +99,12 @@ On this single seed (with historical blind skill distill): dense CAO > flat LLM 
 
 ## Next → Pilot 3 / plan Phase 2 (reconciliation)
 
-Plan now puts **fact reconciliation** before cognition/RL:
+Bandits append-only baselines: see `AGENTIC_MEMORY_PHASE3_NOTE.md`.
 
-- `FactClaim`, `FactRelation`, rebuildable `CurrentFactView`
+True reconciliation (plan §8) is still open:
+
+- `FactClaim`, `FactRelation`, rebuildable `CurrentFactView` as claim-ops projection
 - deterministic identity / duplicate / conflict / correction / supersession
 - controlled conflict & drift cases; optional unresolved-case drill-down
 
-See plan §8 (reconciliation), Pilot 3 list, and engineering Phase 2.  
-**Not started** in code yet. Phase 0 note needs no content change for this.
+A discarded Bandits “ACTIVE latest-best” MVP is **not** reconciliation — do not revive it under that name.

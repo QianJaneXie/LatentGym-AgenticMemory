@@ -1,7 +1,6 @@
-"""Bandits fact extraction + deterministic reconciliation tests."""
+"""Bandits fact extraction tests."""
 from latentgym.memory.bandits_extractor import extract_bandits_facts, parse_button_action
 from latentgym.memory.fact_extractor import VisibleTurn
-from latentgym.memory.reconcile import build_bandits_current_view
 
 
 def test_parse_button_action():
@@ -9,7 +8,7 @@ def test_parse_button_action():
     assert parse_button_action("[select blue]") == ("blue", True)
 
 
-def test_extract_bandits_facts_and_supersession():
+def test_extract_bandits_facts_outcome_and_best():
     turns0 = [
         VisibleTurn(0, "[red]", "You pressed red. Reward: 1"),
         VisibleTurn(1, "[select red]", "You selected 'red' as your final answer on turn 2. Correct!"),
@@ -24,6 +23,7 @@ def test_extract_bandits_facts_and_supersession():
         turns=turns0,
         end_feedback=end0,
     )
+    assert any("explore red; reward=1" in f.outcome for f in facts0)
     assert any("best revealed as red" in f.outcome for f in facts0)
 
     turns1 = [
@@ -40,20 +40,4 @@ def test_extract_bandits_facts_and_supersession():
         turns=turns1,
         end_feedback=end1,
     )
-    all_facts = facts0 + facts1
-    view = build_bandits_current_view(all_facts, trajectory_id="t", as_of_episode_idx=2)
-    active_best = [
-        c
-        for c in view.claims
-        if c.predicate == "revealed_best_button" and c.current_status == "active"
-    ]
-    superseded = [
-        c
-        for c in view.claims
-        if c.predicate == "revealed_best_button" and c.current_status == "superseded"
-    ]
-    assert len(active_best) == 1 and active_best[0].object_value == "green"
-    assert any(c.object_value == "red" for c in superseded)
-    assert any(r.relation_type == "supersedes" for r in view.relations)
-    assert "ACTIVE session state" in view.render_text
-    assert "SUPERSEDED" in view.render_text
+    assert any("best revealed as green" in f.outcome for f in facts1)

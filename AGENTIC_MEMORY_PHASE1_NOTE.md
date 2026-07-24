@@ -103,4 +103,4 @@ Dir: `latentgym/results/memory_phase1_gpt56_setof2_info/` — plumbing only; too
 ## Next
 
 - **Pilot 2** (representation + Hermes-pattern skill / Mem0-style flat extract): done — see `AGENTIC_MEMORY_PHASE2_NOTE.md`.
-- **Pilot 3 / plan Phase 2** (fact reconciliation, `FactClaim` / relations / current view): not started. Faithful Mem0 top-k remains deferred until scale hurts.
+- **Pilot 3 / plan Phase 2**: Bandits append-only done (`AGENTIC_MEMORY_PHASE3_NOTE.md`); claim-level reconciliation still open. Faithful Mem0 top-k remains deferred until scale hurts.

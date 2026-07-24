@@ -12,7 +12,6 @@ Pilot 1 conditions without cognition:
   - skill_only_llm: clear raw history; inject skill distilled in the same task conversation
   - facts_plus_skill_llm: clear raw history; inject dense facts plus same-conversation skill
   - atomic_flat_llm: clear raw history; inject Mem0-style flat LLM memories (read-all)
-  - reconciled_view: clear raw history; inject deterministic CurrentFactView (Bandits MVP)
 """
 from __future__ import annotations
 
@@ -31,7 +30,6 @@ from latentgym.memory.fact_extractor import (
     extract_number_guessing_facts,
     split_boundary_user_message,
 )
-from latentgym.memory.reconcile import build_bandits_current_view
 from latentgym.memory.retriever import (
     build_atomic_flat_extraction_prompt,
     build_inline_skill_distillation_prompt,
@@ -59,7 +57,6 @@ MemoryCondition = Literal[
     "skill_only_llm",
     "facts_plus_skill_llm",
     "atomic_flat_llm",
-    "reconciled_view",
 ]
 _COMPACTED_CONDITIONS = (
     "no_memory",
@@ -71,7 +68,6 @@ _COMPACTED_CONDITIONS = (
     "skill_only_llm",
     "facts_plus_skill_llm",
     "atomic_flat_llm",
-    "reconciled_view",
 )
 _FACT_INJECT_CONDITIONS = (
     "episodic_only",
@@ -82,7 +78,6 @@ _FACT_INJECT_CONDITIONS = (
     "skill_only_llm",
     "facts_plus_skill_llm",
     "atomic_flat_llm",
-    "reconciled_view",
 )
 _LLM_SKILL_CONDITIONS = ("skill_only_llm", "facts_plus_skill_llm")
 
@@ -129,7 +124,6 @@ class MemoryAPIRunner:
             "skill_only_llm",
             "facts_plus_skill_llm",
             "atomic_flat_llm",
-            "reconciled_view",
         ):
             raise ValueError(f"Unknown memory condition: {condition}")
         self.model = model
@@ -179,7 +173,6 @@ class MemoryAPIRunner:
         distilled_skill_history: List[Dict[str, Any]] = []
         flat_memories: List[str] = []
         flat_memory_history: List[Dict[str, Any]] = []
-        reconciled_views: List[Dict[str, Any]] = []
 
         conversation, init_metadata = env.init([])
         # Evaluator-only: keep for TrajectoryResult / EpisodeOutcome, never inject.
@@ -216,7 +209,6 @@ class MemoryAPIRunner:
                 pending_first_decision=True,
                 distilled_skill=distilled_skill,
                 flat_memories=flat_memories,
-                reconciled_views=reconciled_views,
             )
         else:
             self._log_retrieval_only(
@@ -396,7 +388,6 @@ class MemoryAPIRunner:
                         pending_first_decision=True,
                         distilled_skill=distilled_skill,
                         flat_memories=flat_memories,
-                        reconciled_views=reconciled_views,
                     )
                 elif not done and self.condition == "full_history":
                     open_first_decision = {
@@ -458,7 +449,6 @@ class MemoryAPIRunner:
                     "distilled_skill_history": distilled_skill_history,
                     "flat_memories": list(flat_memories),
                     "flat_memory_history": flat_memory_history,
-                    "reconciled_views": reconciled_views,
                 }
             },
         )
@@ -541,7 +531,6 @@ class MemoryAPIRunner:
         pending_first_decision: bool,
         distilled_skill: str = "",
         flat_memories: Optional[List[str]] = None,
-        reconciled_views: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Inject memory into the latest user message for compacted fact conditions."""
         decision_logger.update_known_facts(store.fact_ids())
@@ -585,18 +574,6 @@ class MemoryAPIRunner:
             # Flat notes are not EpisodicFact IDs; keep decision provenance empty.
             block = format_atomic_flat_memories(flat_memories)
             loaded_ids = []
-        elif self.condition == "reconciled_view":
-            if self.env_name != "bandits":
-                raise ValueError("reconciled_view MVP currently supports bandits only")
-            view = build_bandits_current_view(
-                store.all_facts(),
-                trajectory_id=trajectory_id,
-                as_of_episode_idx=episode_idx,
-            )
-            if reconciled_views is not None:
-                reconciled_views.append(view.to_dict())
-            block = view.render_text
-            loaded_ids = list(retrieval.fact_ids)
 
         if block:
             for i in range(len(conversation) - 1, -1, -1):
