@@ -9,9 +9,10 @@ Pilot 1 conditions without cognition:
   - oracle_summary: clear raw history; inject compact restatement of visible outcomes
   - skill_only: clear raw history; inject proxy (template) skill only
   - facts_plus_skill: clear raw history; inject dense facts plus proxy skill
-  - skill_only_llm: clear raw history; inject LLM-distilled skill only
-  - facts_plus_skill_llm: clear raw history; inject dense facts plus LLM-distilled skill
+  - skill_only_llm: clear raw history; inject skill distilled in the same task conversation
+  - facts_plus_skill_llm: clear raw history; inject dense facts plus same-conversation skill
   - atomic_flat_llm: clear raw history; inject Mem0-style flat LLM memories (read-all)
+  - reconciled_view: clear raw history; inject deterministic CurrentFactView (Bandits MVP)
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from typing import Any, Dict, List, Literal, Optional
 from latentgym.core.multi_episode_env import MultiEpisodeEnv
 from latentgym.eval.model_interface import ModelInterface
 from latentgym.eval.types import EpisodeOutcome, OutcomeType, TrajectoryResult
+from latentgym.memory.bandits_extractor import extract_bandits_facts
 from latentgym.memory.decision_logger import DecisionLogger
 from latentgym.memory.episodic_store import EpisodicStore
 from latentgym.memory.fact_extractor import (
@@ -29,9 +31,10 @@ from latentgym.memory.fact_extractor import (
     extract_number_guessing_facts,
     split_boundary_user_message,
 )
+from latentgym.memory.reconcile import build_bandits_current_view
 from latentgym.memory.retriever import (
     build_atomic_flat_extraction_prompt,
-    build_skill_distillation_prompt,
+    build_inline_skill_distillation_prompt,
     format_atomic_flat_memories,
     format_facts_for_prompt,
     format_oracle_summary_from_facts,
@@ -56,6 +59,7 @@ MemoryCondition = Literal[
     "skill_only_llm",
     "facts_plus_skill_llm",
     "atomic_flat_llm",
+    "reconciled_view",
 ]
 _COMPACTED_CONDITIONS = (
     "no_memory",
@@ -67,6 +71,7 @@ _COMPACTED_CONDITIONS = (
     "skill_only_llm",
     "facts_plus_skill_llm",
     "atomic_flat_llm",
+    "reconciled_view",
 )
 _FACT_INJECT_CONDITIONS = (
     "episodic_only",
@@ -77,6 +82,7 @@ _FACT_INJECT_CONDITIONS = (
     "skill_only_llm",
     "facts_plus_skill_llm",
     "atomic_flat_llm",
+    "reconciled_view",
 )
 _LLM_SKILL_CONDITIONS = ("skill_only_llm", "facts_plus_skill_llm")
 
@@ -123,6 +129,7 @@ class MemoryAPIRunner:
             "skill_only_llm",
             "facts_plus_skill_llm",
             "atomic_flat_llm",
+            "reconciled_view",
         ):
             raise ValueError(f"Unknown memory condition: {condition}")
         self.model = model
@@ -130,6 +137,32 @@ class MemoryAPIRunner:
         self.env_name = env_name
         # None = Stage A0 read-all (plan default). Positive int = later budget sweep.
         self.fact_budget = fact_budget
+
+    def _extract_env_facts(
+        self,
+        *,
+        trajectory_id: str,
+        episode_idx: int,
+        turns: List[VisibleTurn],
+        end_feedback: str,
+    ):
+        if self.env_name == "bandits":
+            return extract_bandits_facts(
+                trajectory_id=trajectory_id,
+                episode_idx=episode_idx,
+                turns=turns,
+                end_feedback=end_feedback,
+                environment=self.env_name,
+            )
+        if self.env_name == "number_guessing":
+            return extract_number_guessing_facts(
+                trajectory_id=trajectory_id,
+                episode_idx=episode_idx,
+                turns=turns,
+                end_feedback=end_feedback,
+                environment=self.env_name,
+            )
+        raise ValueError(f"No fact extractor for env_name={self.env_name!r}")
 
     async def run_trajectory(
         self,
@@ -146,6 +179,7 @@ class MemoryAPIRunner:
         distilled_skill_history: List[Dict[str, Any]] = []
         flat_memories: List[str] = []
         flat_memory_history: List[Dict[str, Any]] = []
+        reconciled_views: List[Dict[str, Any]] = []
 
         conversation, init_metadata = env.init([])
         # Evaluator-only: keep for TrajectoryResult / EpisodeOutcome, never inject.
@@ -182,6 +216,7 @@ class MemoryAPIRunner:
                 pending_first_decision=True,
                 distilled_skill=distilled_skill,
                 flat_memories=flat_memories,
+                reconciled_views=reconciled_views,
             )
         else:
             self._log_retrieval_only(
@@ -275,21 +310,18 @@ class MemoryAPIRunner:
                     open_first_decision = None
 
                 completed_ep = len(episode_outcomes)
-                new_facts = extract_number_guessing_facts(
+                new_facts = self._extract_env_facts(
                     trajectory_id=traj_id,
                     episode_idx=completed_ep,
                     turns=pending_turns,
                     end_feedback=end_feedback,
-                    environment=self.env_name,
                 )
                 store.extend(new_facts)
                 decision_logger.update_known_facts(store.fact_ids())
 
                 if self.condition in _LLM_SKILL_CONDITIONS:
-                    distilled_skill = await self._distill_skill_from_store(
-                        store=store,
-                        trajectory_id=traj_id,
-                        episode_idx=completed_ep,
+                    distilled_skill = await self._distill_skill_from_conversation(
+                        conversation
                     )
                     distilled_skill_history.append(
                         {
@@ -364,6 +396,7 @@ class MemoryAPIRunner:
                         pending_first_decision=True,
                         distilled_skill=distilled_skill,
                         flat_memories=flat_memories,
+                        reconciled_views=reconciled_views,
                     )
                 elif not done and self.condition == "full_history":
                     open_first_decision = {
@@ -425,6 +458,7 @@ class MemoryAPIRunner:
                     "distilled_skill_history": distilled_skill_history,
                     "flat_memories": list(flat_memories),
                     "flat_memory_history": flat_memory_history,
+                    "reconciled_views": reconciled_views,
                 }
             },
         )
@@ -445,6 +479,7 @@ class MemoryAPIRunner:
             episode_idx=episode_idx,
             turn_lines=turn_lines,
             end_feedback=end_feedback,
+            environment=self.env_name,
         )
         messages = [
             {
@@ -460,32 +495,20 @@ class MemoryAPIRunner:
         response = await self.model.generate(messages)
         return parse_atomic_flat_bullets(response.text)
 
-    async def _distill_skill_from_store(
+    async def _distill_skill_from_conversation(
         self,
-        *,
-        store: EpisodicStore,
-        trajectory_id: str,
-        episode_idx: int,
+        conversation: List[Dict[str, str]],
     ) -> str:
-        """Ask the task model to write a short skill from agent-visible outcomes only."""
-        prior_facts = [
-            f
-            for f in store.all_facts()
-            if f.trajectory_id == trajectory_id and f.episode_idx <= episode_idx
-        ]
-        prompt = build_skill_distillation_prompt(prior_facts)
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You distill short reusable skills from verified game outcomes. "
-                    "Never invent hidden latents or evaluator-only information."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-        _assert_no_ground_truth_leakage(messages)
-        response = await self.model.generate(messages)
+        """Ask the task model to write a skill in the live play conversation (Hermes-pattern).
+
+        Appends a write-skill user turn to the current conversation (rules + play so far),
+        then generates. Compacted modes rebuild conversation afterward, so this turn is
+        not carried into the next episode.
+        """
+        prompt = build_inline_skill_distillation_prompt()
+        conversation.append({"role": "user", "content": prompt})
+        _assert_no_ground_truth_leakage(conversation)
+        response = await self.model.generate(conversation)
         return wrap_distilled_skill(response.text)
 
     def _log_retrieval_only(
@@ -518,6 +541,7 @@ class MemoryAPIRunner:
         pending_first_decision: bool,
         distilled_skill: str = "",
         flat_memories: Optional[List[str]] = None,
+        reconciled_views: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Inject memory into the latest user message for compacted fact conditions."""
         decision_logger.update_known_facts(store.fact_ids())
@@ -561,6 +585,18 @@ class MemoryAPIRunner:
             # Flat notes are not EpisodicFact IDs; keep decision provenance empty.
             block = format_atomic_flat_memories(flat_memories)
             loaded_ids = []
+        elif self.condition == "reconciled_view":
+            if self.env_name != "bandits":
+                raise ValueError("reconciled_view MVP currently supports bandits only")
+            view = build_bandits_current_view(
+                store.all_facts(),
+                trajectory_id=trajectory_id,
+                as_of_episode_idx=episode_idx,
+            )
+            if reconciled_views is not None:
+                reconciled_views.append(view.to_dict())
+            block = view.render_text
+            loaded_ids = list(retrieval.fact_ids)
 
         if block:
             for i in range(len(conversation) - 1, -1, -1):

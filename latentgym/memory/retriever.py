@@ -13,6 +13,15 @@ from latentgym.memory.episodic_store import EpisodicStore
 from latentgym.memory.types import EpisodicFact
 
 _TARGET_REVEALED = re.compile(r"target revealed as (\d+)", re.IGNORECASE)
+_BEST_REVEALED = re.compile(r"best revealed as (\w+)", re.IGNORECASE)
+
+
+def _env_from_facts(facts: Sequence[EpisodicFact]) -> str:
+    for f in facts:
+        env = (f.context or {}).get("environment")
+        if env:
+            return str(env)
+    return "number_guessing"
 
 
 @dataclass
@@ -113,12 +122,13 @@ def build_atomic_flat_extraction_prompt(
     episode_idx: int,
     turn_lines: Sequence[str],
     end_feedback: str,
+    environment: str = "number_guessing",
 ) -> str:
     """Prompt for Mem0-style flat memory extraction from one visible episode."""
     lines = [
-        "Extract short, flat, reusable memories from this number-guessing episode.",
+        f"Extract short, flat, reusable memories from this {environment} episode.",
         "Use ONLY the agent-visible transcript below.",
-        "Do not invent hidden latents, set membership, or future targets.",
+        "Do not invent hidden latents or evaluator-only information.",
         "Prefer objective observations over advice or strategies.",
         "Return 1-6 bullet lines. Each bullet should be one short standalone fact.",
         "Plain text only. No JSON.",
@@ -171,28 +181,22 @@ def format_atomic_flat_memories(memories: Sequence[str]) -> str:
     return "\n".join(lines)
 
 
-def build_skill_distillation_prompt(facts: Sequence[EpisodicFact]) -> str:
-    """User prompt asking an LLM to distill a short skill from visible outcomes."""
-    outcomes = select_outcome_only_facts(facts)
-    if not outcomes:
-        return (
-            "No verified episode outcomes are available yet.\n"
-            "Write one short reusable skill for number guessing that only uses ordinary "
-            "binary search. Plain text, 2-4 bullet lines. No hidden latents."
-        )
-    lines = [
-        "You are writing a short reusable skill/lesson for a number-guessing agent.",
-        "Use ONLY the verified past episode outcomes below.",
-        "Do not invent hidden latents, set membership, or future targets.",
-        "Do not claim certainty beyond the outcomes.",
-        "Return 3-6 bullet lines of procedural advice for the next game.",
-        "Plain text only. No JSON. No bracketed number guesses.",
-        "",
-        "Verified episode outcomes:",
-    ]
-    for fact in outcomes:
-        lines.append(f"- episode={fact.episode_idx}; {fact.outcome}")
-    return "\n".join(lines)
+def build_inline_skill_distillation_prompt() -> str:
+    """User prompt appended to the live task conversation after an episode ends.
+
+    Hermes-pattern: the task agent writes the skill in the same conversation that
+    contains the rules and the play just completed (not a blind outcomes-only call).
+    """
+    return (
+        "Before the next game, write a short reusable skill/lesson based on this "
+        "conversation so far (the rules already above, plus the play you just completed).\n"
+        "If an experience/skill note was already injected earlier in this conversation, "
+        "revise it using what you just learned.\n"
+        "Use only information visible in this conversation. Do not invent hidden latents "
+        "or evaluator-only information that was never stated.\n"
+        "Return 3-6 bullet lines of procedural advice for the next game.\n"
+        "Plain text only. No JSON."
+    )
 
 
 def wrap_distilled_skill(skill_body: str) -> str:
@@ -202,7 +206,7 @@ def wrap_distilled_skill(skill_body: str) -> str:
         return ""
     return (
         "Experience / skill note (LLM-distilled procedural advice from past visible "
-        "outcomes; fallible; current evidence overrides it):\n"
+        "play; fallible; current evidence overrides it):\n"
         + body
     )
 
@@ -216,6 +220,31 @@ def format_skill_from_facts(facts: Sequence[EpisodicFact]) -> str:
     outcomes = select_outcome_only_facts(facts)
     if not outcomes:
         return ""
+
+    env = _env_from_facts(facts)
+    if env == "bandits":
+        bests: List[str] = []
+        for fact in outcomes:
+            m = _BEST_REVEALED.search(fact.outcome or "")
+            if m:
+                bests.append(m.group(1).lower())
+        if not bests:
+            return (
+                "Experience / skill note (fallible procedural advice; current evidence overrides it):\n"
+                "- Past episodes did not reveal best-button labels in the visible feedback.\n"
+                "- Suggested procedure: explore each button a few times, then select the "
+                "empirical favorite."
+            )
+        latest = bests[-1]
+        uniq = list(dict.fromkeys(bests))
+        return (
+            "Experience / skill note (fallible procedural advice distilled from past episodes; "
+            "current evidence overrides it):\n"
+            f"- Previously revealed best buttons (in order): {uniq}\n"
+            f"- Latest revealed best: {latest}\n"
+            "- Suggested procedure: begin by testing the latest revealed best, but treat older "
+            "bests as historical events that may no longer be active if the session pattern drifts."
+        )
 
     revealed: List[int] = []
     for fact in outcomes:
@@ -245,18 +274,33 @@ def format_skill_from_facts(facts: Sequence[EpisodicFact]) -> str:
 def format_oracle_summary_from_facts(facts: Sequence[EpisodicFact]) -> str:
     """Build a concise oracle summary from agent-visible outcome facts only.
 
-    Uses revealed targets / solve status from prior episode outcomes. Never reads
-    evaluator-only fields such as latent range_start or set_values.
+    Uses revealed targets / best buttons from prior episode outcomes. Never reads
+    evaluator-only latent fields beyond what the feedback already revealed.
     """
     outcomes = select_outcome_only_facts(facts)
     if not outcomes:
         return ""
 
-    revealed: List[int] = []
+    env = _env_from_facts(facts)
     lines = [
         "Oracle factual summary (compact restatement of agent-visible episode outcomes only; "
         "current evidence overrides it):",
     ]
+    if env == "bandits":
+        bests: List[str] = []
+        for fact in outcomes:
+            lines.append(f"- episode={fact.episode_idx}; {fact.outcome}")
+            m = _BEST_REVEALED.search(fact.outcome or "")
+            if m:
+                bests.append(m.group(1).lower())
+        if bests:
+            lines.append(
+                f"- compact restatement: revealed best buttons in order = {bests}; "
+                f"latest={bests[-1]}."
+            )
+        return "\n".join(lines)
+
+    revealed: List[int] = []
     for fact in outcomes:
         lines.append(f"- episode={fact.episode_idx}; {fact.outcome}")
         m = _TARGET_REVEALED.search(fact.outcome or "")

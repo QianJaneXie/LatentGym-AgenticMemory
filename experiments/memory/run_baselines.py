@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 1 / Pilot 1 baselines on Number Guessing.
+"""Memory baselines on Number Guessing or Bandits.
 
 Reuses the same trajectory JSON files across conditions.
 """
@@ -11,6 +11,7 @@ import json
 import logging
 from pathlib import Path
 
+import latentgym.envs.bandits  # noqa: F401
 import latentgym.envs.number_guessing  # noqa: F401
 from latentgym.core.env_config import FullyDefinedEnv
 from latentgym.core.registry import make_env
@@ -25,7 +26,7 @@ PILOT1_CONDITIONS = (
     "no_memory",
     "full_history",
     "outcome_only",
-    "episodic_only",  # dense context-action-outcome + outcomes
+    "episodic_only",
     "oracle_summary",
 )
 
@@ -34,7 +35,20 @@ PILOT2_CONDITIONS = (
     "facts_plus_skill",
     "skill_only_llm",
     "facts_plus_skill_llm",
-    "atomic_flat_llm",  # Mem0-style flat LLM extraction, read-all
+    "atomic_flat_llm",
+)
+
+# Bandits Pilot 3: prior baselines + reconciled current view
+BANDITS_PILOT_CONDITIONS = (
+    "no_memory",
+    "full_history",
+    "outcome_only",
+    "episodic_only",
+    "oracle_summary",
+    "reconciled_view",
+    "atomic_flat_llm",
+    "skill_only_llm",
+    "facts_plus_skill_llm",
 )
 
 
@@ -44,6 +58,28 @@ def _load_traj_files(trajectory_dir: Path, env_name: str, latent_id: str) -> lis
     subdir = nested if nested.exists() else flat if flat.exists() else trajectory_dir
     manifest = load_manifest(str(subdir))
     return [subdir / f for f in manifest.trajectory_files]
+
+
+def _configure_mock_for_env(model, env_name: str):
+    """Give MockModel env-plausible scripted actions when using the default mock."""
+    if not isinstance(model, MockModel):
+        return model
+    if env_name == "bandits":
+        buttons = ["red", "blue", "green", "yellow", "purple"]
+        responses = []
+        for b in buttons:
+            responses.append(f"[{b}]")
+        responses.append("[select red]")
+        # Repeat explore/select patterns for many episodes
+        script = (responses * 40)
+        return MockModel(name=model.name, responses=script, default_response="[select red]")
+    if env_name == "number_guessing":
+        return MockModel(
+            name=model.name,
+            responses=[f"[{g}]" for g in (500, 250, 125, 62, 115, 655) * 50],
+            default_response="[500]",
+        )
+    return model
 
 
 async def run_condition(
@@ -90,6 +126,10 @@ async def run_condition(
         (memory_out / f"traj_{i:04d}_decisions.json").write_text(
             json.dumps(mem.get("decisions", []), indent=2)
         )
+        if mem.get("reconciled_views"):
+            (memory_out / f"traj_{i:04d}_reconciled_views.json").write_text(
+                json.dumps(mem.get("reconciled_views", []), indent=2)
+            )
 
         summaries.append(
             {
@@ -128,18 +168,18 @@ async def main_async(args: argparse.Namespace) -> None:
     if not traj_files:
         raise FileNotFoundError(f"No trajectories under {args.trajectory_dir}")
 
-    model = _parse_model_spec(args.model)
-    if isinstance(model, MockModel) and model._default_response == "[red]":
-        model = MockModel(
-            name=model.name,
-            responses=[f"[{g}]" for g in (500, 250, 125, 62, 115, 655) * 50],
-            default_response="[500]",
-        )
+    model = _configure_mock_for_env(_parse_model_spec(args.model), args.env)
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    conditions = tuple(args.conditions) if args.conditions else PILOT1_CONDITIONS
+    if args.conditions:
+        conditions = tuple(args.conditions)
+    elif args.env == "bandits":
+        conditions = BANDITS_PILOT_CONDITIONS
+    else:
+        conditions = PILOT1_CONDITIONS
+
     all_summaries = {}
     summary_path = output_dir / "baselines_summary.json"
     if args.merge_existing and summary_path.exists():
@@ -169,7 +209,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--latent", default="range_100")
     p.add_argument("--prompt", default="full_info")
     p.add_argument("--feedback", default="standard")
-    p.add_argument("--num-episodes", type=int, default=7)
+    p.add_argument(
+        "--num-episodes",
+        type=int,
+        default=None,
+        help="Default: 7 for number_guessing, 10 for bandits (env designer default).",
+    )
     p.add_argument("--n-trajectories", type=int, default=1)
     p.add_argument("--trajectory-dir", default="latentgym/data/eval/")
     p.add_argument("--output", default="latentgym/results/memory_phase1/")
@@ -179,7 +224,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             f"Subset of conditions. Pilot1={list(PILOT1_CONDITIONS)}; "
-            f"Pilot2 extras={list(PILOT2_CONDITIONS)}. Default: all Pilot 1."
+            f"Pilot2={list(PILOT2_CONDITIONS)}; "
+            f"Bandits default={list(BANDITS_PILOT_CONDITIONS)}."
         ),
     )
     p.add_argument(
@@ -192,6 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.num_episodes is None:
+        args.num_episodes = 10 if args.env == "bandits" else 7
     asyncio.run(main_async(args))
 
 

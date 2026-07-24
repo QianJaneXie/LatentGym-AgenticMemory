@@ -14,25 +14,25 @@
 | Condition | Who writes the skill | Meaning |
 |---|---|---|
 | `skill_only` / `facts_plus_skill` | Experimenter **template** | Proxy pattern only |
-| `skill_only_llm` / `facts_plus_skill_llm` | **Same task LLM** distills a lesson after each episode from agent-visible outcomes | Closer Hermes-pattern adaptation |
+| `skill_only_llm` / `facts_plus_skill_llm` | **Same task agent conversation** writes/revises a skill after each episode | Hermes-pattern adaptation (inline) |
 
 Neither is a full Hermes Agent integration (no `SKILL.md` / `skill_manage`).
 
-**Harm baseline decision:** do not require handwritten toxic cognition. Default “soft toxicity” comes from market-style **LLM-distilled skills** (e.g. `skill_only_llm` underperforming `episodic_only`). Handwritten toxic rules stay optional; see plan Phase 4 / Hermes-pattern section.
+**Superseded (blind distill):** An earlier Pilot 2 implementation used a separate `generate()` that saw only verified outcomes (no game rules). That blind arm produced soft-toxicity lessons and the numbers/explorer below. **Current code no longer does that** — skill write appends to the live task conversation (rules + play), then compacted modes rebuild context for the next episode. Do not treat the historical `skill_only_llm` reward table as measuring the current condition.
 
-LLM distillation flow:
+LLM distillation flow (current):
 
 ```text
-episode ends
-  -> extract visible outcome facts
-  -> separate generate() call: "write a short reusable skill from these outcomes"
+episode ends (conversation still holds rules + this episode's play)
+  -> append user turn: "write a short reusable skill from this conversation"
+  -> generate() on that same conversation
   -> store distilled skill text
-  -> next episode: inject skill only, or dense facts + skill
+  -> next episode: rebuild compacted context; inject skill only, or dense facts + skill
 ```
 
 `facts_plus_skill*` uses the **same dense facts as `episodic_only`**.
 
-Explorer (self-contained HTML):  
+Explorer (updated for inline distill; includes historical blind quotes for contrast):  
 `latentgym/results/memory_phase1_gpt56_range100_standard/skill_only_llm/hermes_soft_toxicity_explorer.html`
 
 ---
@@ -75,12 +75,14 @@ python experiments/memory/run_baselines.py \
 | facts_plus_skill | 6.060 | `[9, 8, 7, 7, 5, 6, 5]` |
 | episodic_only (ref) | **6.140** | `[9, 8, 6, 6, 5, 4, 5]` |
 
-### LLM-distilled skill
+### LLM-distilled skill (historical — blind outcomes-only distill; superseded)
 
 | Condition | reward | turns |
 |---|---|---|
 | skill_only_llm | 5.880 | `[9, 8, 6, 9, 9, 10, 5]` |
 | facts_plus_skill_llm | 6.040 | `[9, 8, 6, 6, 6, 7, 6]` |
+
+These scores reflect the old blind distill, not inline same-conversation skill write. Re-run before comparing to other conditions under current code.
 
 ### Atomic flat LLM (Mem0-style extract, read-all)
 
@@ -91,7 +93,7 @@ python experiments/memory/run_baselines.py \
 | outcome_only (ref) | 6.020 | `[9, 8, 6, 7, 7, 7, 5]` |
 | no_memory (ref) | 5.700 | `[9, 10, 10, 8, 10, 8, 10]` |
 
-On this single seed: dense CAO > flat LLM notes ≈ outcome-only ≫ no memory; skill-only LLM is the weakest experience arm. Distilled texts: `memory.distilled_skill_history`. Flat notes: `memory.flat_memories`.
+On this single seed (with historical blind skill distill): dense CAO > flat LLM notes ≈ outcome-only ≫ no memory; blind skill-only LLM was the weakest experience arm. Distilled texts: `memory.distilled_skill_history`. Flat notes: `memory.flat_memories`.
 
 ---
 

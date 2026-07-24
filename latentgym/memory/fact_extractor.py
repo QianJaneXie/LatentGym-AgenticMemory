@@ -213,6 +213,7 @@ def split_boundary_user_message(content: str) -> Dict[str, str]:
     into one user message. We recover pieces with conservative heuristics.
     """
     next_obs = ""
+    # Number Guessing next-episode cue
     marker = "I'm thinking of a number between"
     idx = content.rfind(marker)
     if idx >= 0:
@@ -222,7 +223,24 @@ def split_boundary_user_message(content: str) -> Dict[str, str]:
         next_obs = content[start:].strip()
         prior = content[:start].strip()
     else:
-        prior = content.strip()
+        # Bandits / generic: next episode often starts at the last "--- Game N of M ---"
+        game_headers = [
+            m.start()
+            for m in re.finditer(r"(?m)^--- Game \d+ of \d+ ---", content)
+        ]
+        if len(game_headers) >= 1 and (
+            "finished" in content.lower() or "complete!" in content.lower()
+        ):
+            # Prefer a header that appears after an episode-finished line.
+            start = game_headers[-1]
+            finished_idx = content.lower().rfind("finished")
+            if finished_idx >= 0 and start > finished_idx:
+                next_obs = content[start:].strip()
+                prior = content[:start].strip()
+            else:
+                prior = content.strip()
+        else:
+            prior = content.strip()
 
     end_feedback = ""
     for line in prior.splitlines():

@@ -15,7 +15,7 @@
 | Phase 0 | `AGENTIC_MEMORY_PHASE0_NOTE.md` | Done |
 | Pilot 1 / eng. Phase 1 (factual utility) | `AGENTIC_MEMORY_PHASE1_NOTE.md` | Done on `range_100` / `traj_000` (7 ep, GPT-5.6) |
 | Pilot 2 (flat extract + Hermes-pattern skills) | `AGENTIC_MEMORY_PHASE2_NOTE.md` | Done on same seed (not eng. Phase 2) |
-| Pilot 3 / eng. **Phase 2** (fact reconciliation) | — | **Next** |
+| Pilot 3 / eng. **Phase 2** (fact reconciliation) | `AGENTIC_MEMORY_PHASE3_NOTE.md` | **In progress** on Bandits/`hot_hand` (MVP `reconciled_view`) |
 | Eng. Phase 3+ (retrieval scale, cognition, RL) | — | Not started |
 
 Do not confuse **Pilot 2** (representation / skill baselines) with engineering **Phase 2** (reconciliation).
@@ -1284,10 +1284,10 @@ The Hermes labels refer to the system pattern of persistent memory plus skills a
 **How Hermes-style skills are produced (important):**
 
 - In the real Hermes Agent product, skills are primarily **agent-distilled**: after tasks, the agent writes or revises procedural `SKILL.md`-like artifacts (humans may also author or approve skills).
-- In LatentGym Pilot 2, use the same *information pattern* (skill without facts vs facts plus skill) under a transparent adaptation (landed; see `AGENTIC_MEMORY_PHASE2_NOTE.md`):
+- In LatentGym, use the same *information pattern* (skill without facts vs facts plus skill) under a transparent adaptation (see `AGENTIC_MEMORY_PHASE2_NOTE.md`):
   1. **Proxy skill:** deterministic experimenter template from agent-visible outcomes — plumbing / lower bound, **not** Hermes distillation (`skill_only`, `facts_plus_skill`).
-  2. **Closer Hermes-pattern adaptation:** after each episode, prompt an LLM to write a short lesson from agent-visible outcomes, then inject alone (`skill_only_llm`) or with dense facts (`facts_plus_skill_llm`). No `SKILL.md` / Hermes product integration.
-- **Harm / brittleness baseline:** do **not** require handwritten “toxic cognition” injects. Prefer market-style LLM distillation; on the pilot seed, `skill_only_llm` underperformed dense facts and sometimes advised against using shared-range structure. Handwritten toxic rules remain optional diagnostics only.
+  2. **Hermes-pattern adaptation (current):** after each episode, append a write-skill turn to the **live task conversation** (rules + play just completed) and `generate()` there; inject alone (`skill_only_llm`) or with dense facts (`facts_plus_skill_llm`). No `SKILL.md` / Hermes product integration.
+- **Historical note:** Pilot 2 first landed a blind outcomes-only distill that could write soft-toxic lessons (no rules in context). That path is removed; old `skill_only_llm` numbers/explorer are not measurements of the current condition. Handwritten toxic rules remain optional diagnostics only.
 - Do not report a template or LatentGym distilled skill as “Hermes Agent.” Label as Hermes-**pattern** adaptation.
 
 The atomic flat-fact baseline (`atomic_flat_llm`) is framework-independent and **landed in Pilot 2** (read-all LLM notes). A **faithful Mem0 system baseline** (query top-k / hybrid) remains deferred until retrieval scale becomes relevant.
