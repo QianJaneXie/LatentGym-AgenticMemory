@@ -84,9 +84,9 @@ Reading (single-seed pilot, not a multi-seed proof):
 - Oracle summary matches full history here; does not beat dense facts on this seed.
 - Single trajectory by design for this pilot; next work is Pilot 2, not more Pilot 1 seeds.
 
-### Smoke: `set_of_2` + `information` (`traj_000`, 7 episodes)
+### Smoke: `set_of_2` + `information`
 
-Dir: `latentgym/results/memory_phase1_gpt56_setof2_info/` — plumbing only; too easy for representation headroom.
+Optional plumbing only (`set_of_2` too easy for representation headroom). Result dir deleted as disposable; regenerate if needed.
 
 ---
 

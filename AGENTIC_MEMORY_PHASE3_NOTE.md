@@ -86,10 +86,6 @@ python experiments/memory/run_baselines.py ... \
 
 ## Results
 
-### Mock plumbing
-
-Dir: `latentgym/results/memory_bandits_hot_hand_mock/` — scripted mock ignores memory (equal rewards); used to verify extractors.
-
 ### GPT-5.6 (`traj_000000`, 10 episodes)
 
 Dir: `latentgym/results/memory_bandits_hot_hand_gpt56/`

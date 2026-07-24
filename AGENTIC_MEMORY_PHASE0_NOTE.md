@@ -48,11 +48,10 @@ python -m latentgym.cli.report \
   --output latentgym/results/memory_sanity/report/
 ```
 
-Artifacts:
+Artifacts (Phase 0 run; result dir later deleted as disposable smoke):
 
 - Input trajs: `latentgym/data/eval/number_guessing/set_of_2/traj_00{0,1,2}.json`
-- Result trajs: `latentgym/results/memory_sanity/trajectories/mock_random/.../traj_000{0,1,2}.json`
-- Viewer: `latentgym/results/memory_sanity/report/trajectory_explorer.html`
+- Result trajs / viewer were under `latentgym/results/memory_sanity/` (regenerate with the commands above if needed)
 
 Mock reward is `0.0` because `MockModel` defaults to `[red]`, which is invalid for number guessing. That is expected for a no-cost pipeline sanity check.
 
