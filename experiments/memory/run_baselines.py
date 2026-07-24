@@ -34,6 +34,7 @@ PILOT2_CONDITIONS = (
     "facts_plus_skill",
     "skill_only_llm",
     "facts_plus_skill_llm",
+    "atomic_flat_llm",  # Mem0-style flat LLM extraction, read-all
 )
 
 

@@ -11,6 +11,7 @@ Pilot 1 conditions without cognition:
   - facts_plus_skill: clear raw history; inject dense facts plus proxy skill
   - skill_only_llm: clear raw history; inject LLM-distilled skill only
   - facts_plus_skill_llm: clear raw history; inject dense facts plus LLM-distilled skill
+  - atomic_flat_llm: clear raw history; inject Mem0-style flat LLM memories (read-all)
 """
 from __future__ import annotations
 
@@ -29,10 +30,13 @@ from latentgym.memory.fact_extractor import (
     split_boundary_user_message,
 )
 from latentgym.memory.retriever import (
+    build_atomic_flat_extraction_prompt,
     build_skill_distillation_prompt,
+    format_atomic_flat_memories,
     format_facts_for_prompt,
     format_oracle_summary_from_facts,
     format_skill_from_facts,
+    parse_atomic_flat_bullets,
     retrieve_episodic_facts,
     select_outcome_only_facts,
     wrap_distilled_skill,
@@ -51,6 +55,7 @@ MemoryCondition = Literal[
     "facts_plus_skill",
     "skill_only_llm",
     "facts_plus_skill_llm",
+    "atomic_flat_llm",
 ]
 _COMPACTED_CONDITIONS = (
     "no_memory",
@@ -61,6 +66,7 @@ _COMPACTED_CONDITIONS = (
     "facts_plus_skill",
     "skill_only_llm",
     "facts_plus_skill_llm",
+    "atomic_flat_llm",
 )
 _FACT_INJECT_CONDITIONS = (
     "episodic_only",
@@ -70,6 +76,7 @@ _FACT_INJECT_CONDITIONS = (
     "facts_plus_skill",
     "skill_only_llm",
     "facts_plus_skill_llm",
+    "atomic_flat_llm",
 )
 _LLM_SKILL_CONDITIONS = ("skill_only_llm", "facts_plus_skill_llm")
 
@@ -115,6 +122,7 @@ class MemoryAPIRunner:
             "facts_plus_skill",
             "skill_only_llm",
             "facts_plus_skill_llm",
+            "atomic_flat_llm",
         ):
             raise ValueError(f"Unknown memory condition: {condition}")
         self.model = model
@@ -136,6 +144,8 @@ class MemoryAPIRunner:
         decision_logger = DecisionLogger()
         distilled_skill = ""
         distilled_skill_history: List[Dict[str, Any]] = []
+        flat_memories: List[str] = []
+        flat_memory_history: List[Dict[str, Any]] = []
 
         conversation, init_metadata = env.init([])
         # Evaluator-only: keep for TrajectoryResult / EpisodeOutcome, never inject.
@@ -171,6 +181,7 @@ class MemoryAPIRunner:
                 episode_idx=0,
                 pending_first_decision=True,
                 distilled_skill=distilled_skill,
+                flat_memories=flat_memories,
             )
         else:
             self._log_retrieval_only(
@@ -273,7 +284,6 @@ class MemoryAPIRunner:
                 )
                 store.extend(new_facts)
                 decision_logger.update_known_facts(store.fact_ids())
-                pending_turns = []
 
                 if self.condition in _LLM_SKILL_CONDITIONS:
                     distilled_skill = await self._distill_skill_from_store(
@@ -287,6 +297,27 @@ class MemoryAPIRunner:
                             "skill_text": distilled_skill,
                         }
                     )
+
+                if self.condition == "atomic_flat_llm":
+                    extracted = await self._extract_atomic_flat_memories(
+                        episode_idx=completed_ep,
+                        turns=pending_turns,
+                        end_feedback=end_feedback,
+                    )
+                    if extracted:
+                        existing = {m.lower() for m in flat_memories}
+                        added = [m for m in extracted if m.lower() not in existing]
+                        flat_memories.extend(added)
+                        flat_memory_history.append(
+                            {
+                                "after_episode_idx": completed_ep,
+                                "extracted": extracted,
+                                "added": added,
+                                "n_total": len(flat_memories),
+                            }
+                        )
+
+                pending_turns = []
 
                 while len(episode_outcomes) < len(ep_rewards):
                     idx = len(episode_outcomes)
@@ -332,6 +363,7 @@ class MemoryAPIRunner:
                         episode_idx=current_episode,
                         pending_first_decision=True,
                         distilled_skill=distilled_skill,
+                        flat_memories=flat_memories,
                     )
                 elif not done and self.condition == "full_history":
                     open_first_decision = {
@@ -391,10 +423,42 @@ class MemoryAPIRunner:
                     "n_decisions": len(decision_logger.all_traces()),
                     "distilled_skill": distilled_skill,
                     "distilled_skill_history": distilled_skill_history,
+                    "flat_memories": list(flat_memories),
+                    "flat_memory_history": flat_memory_history,
                 }
             },
         )
         return result
+
+    async def _extract_atomic_flat_memories(
+        self,
+        *,
+        episode_idx: int,
+        turns: List[VisibleTurn],
+        end_feedback: str,
+    ) -> List[str]:
+        """Mem0-style flat extraction from one episode's agent-visible transcript."""
+        turn_lines = [
+            f"guess={t.action.strip()} | feedback={t.feedback.strip()}" for t in turns
+        ]
+        prompt = build_atomic_flat_extraction_prompt(
+            episode_idx=episode_idx,
+            turn_lines=turn_lines,
+            end_feedback=end_feedback,
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You extract short flat memories from a visible game transcript. "
+                    "Never invent hidden latents or evaluator-only information."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+        _assert_no_ground_truth_leakage(messages)
+        response = await self.model.generate(messages)
+        return parse_atomic_flat_bullets(response.text)
 
     async def _distill_skill_from_store(
         self,
@@ -453,6 +517,7 @@ class MemoryAPIRunner:
         episode_idx: int,
         pending_first_decision: bool,
         distilled_skill: str = "",
+        flat_memories: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Inject memory into the latest user message for compacted fact conditions."""
         decision_logger.update_known_facts(store.fact_ids())
@@ -492,6 +557,10 @@ class MemoryAPIRunner:
             facts_block = format_facts_for_prompt(retrieval.facts) if retrieval.facts else ""
             block = "\n\n".join(p for p in (facts_block, distilled_skill) if p)
             loaded_ids = list(retrieval.fact_ids)
+        elif self.condition == "atomic_flat_llm" and flat_memories:
+            # Flat notes are not EpisodicFact IDs; keep decision provenance empty.
+            block = format_atomic_flat_memories(flat_memories)
+            loaded_ids = []
 
         if block:
             for i in range(len(conversation) - 1, -1, -1):

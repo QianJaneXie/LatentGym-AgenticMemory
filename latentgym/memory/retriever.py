@@ -108,6 +108,69 @@ def select_outcome_only_facts(facts: Sequence[EpisodicFact]) -> List[EpisodicFac
     ]
 
 
+def build_atomic_flat_extraction_prompt(
+    *,
+    episode_idx: int,
+    turn_lines: Sequence[str],
+    end_feedback: str,
+) -> str:
+    """Prompt for Mem0-style flat memory extraction from one visible episode."""
+    lines = [
+        "Extract short, flat, reusable memories from this number-guessing episode.",
+        "Use ONLY the agent-visible transcript below.",
+        "Do not invent hidden latents, set membership, or future targets.",
+        "Prefer objective observations over advice or strategies.",
+        "Return 1-6 bullet lines. Each bullet should be one short standalone fact.",
+        "Plain text only. No JSON.",
+        "",
+        f"Episode index: {episode_idx}",
+        "Visible transcript:",
+    ]
+    for line in turn_lines:
+        lines.append(f"- {line}")
+    if end_feedback.strip():
+        lines.append(f"- episode_end: {end_feedback.strip()}")
+    return "\n".join(lines)
+
+
+def parse_atomic_flat_bullets(text: str) -> List[str]:
+    """Parse LLM bullet lines into cleaned flat memory strings."""
+    out: List[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line[0] in "-*•":
+            line = line[1:].strip()
+        elif len(line) > 2 and line[0].isdigit() and line[1] in ".)":
+            line = line[2:].strip()
+        if line:
+            out.append(line)
+    # Light dedupe while preserving order
+    seen = set()
+    unique: List[str] = []
+    for item in out:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def format_atomic_flat_memories(memories: Sequence[str]) -> str:
+    """Render accumulated flat memories for the task agent (read-all)."""
+    if not memories:
+        return ""
+    lines = [
+        "Atomic flat memories (LLM-extracted from past visible episodes; fallible; "
+        "current evidence overrides them):",
+    ]
+    for i, mem in enumerate(memories):
+        lines.append(f"- [m{i}] {mem}")
+    return "\n".join(lines)
+
+
 def build_skill_distillation_prompt(facts: Sequence[EpisodicFact]) -> str:
     """User prompt asking an LLM to distill a short skill from visible outcomes."""
     outcomes = select_outcome_only_facts(facts)

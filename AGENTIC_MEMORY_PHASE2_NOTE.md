@@ -1,6 +1,6 @@
 # Agentic Memory — Phase / Pilot 2 Note
 
-**Status:** proxy skill done; LLM-distilled Hermes-pattern skill added  
+**Status:** proxy + LLM skill done; Mem0-style flat extraction added  
 **Depends on:** Pilot 1 complete (`AGENTIC_MEMORY_PHASE1_NOTE.md`)  
 **Focus latent:** `range_100`, 7 episodes, GPT-5.6, one trajectory (`traj_000`)
 
@@ -29,22 +29,30 @@ episode ends
 
 ---
 
-## Why atomic flat facts is lower priority right now
+## Mem0-style atomic flat extraction (`atomic_flat_llm`)
 
-Atomic flat facts = another LLM extracts short unstructured notes from the transcript (representation ablation, **not** Mem0).
+This is the baseline we may want to **beat** with dense context–action–outcome facts:
 
-Deferred because:
+| Axis | This condition | Full Mem0 |
+|---|---|---|
+| Extraction | LLM writes short flat bullets from visible transcript | Same idea |
+| Presentation | **read-all** accumulated notes | Usually query → top-k |
+| Ranking / embeddings | None | Deferred until store size hurts |
 
-1. Pilot 1 already compared outcome-only vs dense context–action–outcome vs oracle — that answers “what factual body helps” without a second extractor.
-2. On `range_100`, dense facts already ≈ full history; a flatter LLM extract is unlikely to change the main story before skill/cognition questions.
-3. It adds API cost and another failure mode (bad extraction) without addressing Hermes-style experience vs facts.
-4. Mem0 (query retrieval) remains separately deferred until scale matters.
+Flow:
 
-Revisit atomic flat facts only if we need a representation ablation against Mem0-like extraction, or dense facts become too noisy.
+```text
+episode ends
+  -> separate generate(): extract 1-6 short flat facts from visible turns + end feedback
+  -> append (light dedupe) to flat_memories
+  -> next episode: inject all flat memories (no dense CAO block)
+```
+
+Extracted notes are stored in `memory.flat_memories` / `flat_memory_history` (not as `EpisodicFact` IDs).
 
 ---
 
-## How to run LLM-distilled skills
+## How to run Pilot 2 extras
 
 ```bash
 python experiments/memory/run_baselines.py \
@@ -54,7 +62,7 @@ python experiments/memory/run_baselines.py \
   --n-trajectories 1 --num-episodes 7 \
   --trajectory-dir latentgym/data/eval/ \
   --output latentgym/results/memory_phase1_gpt56_range100_standard/ \
-  --conditions skill_only_llm facts_plus_skill_llm \
+  --conditions skill_only_llm facts_plus_skill_llm atomic_flat_llm \
   --merge-existing
 ```
 
@@ -70,11 +78,22 @@ python experiments/memory/run_baselines.py \
 | facts_plus_skill | 6.060 | `[9, 8, 7, 7, 5, 6, 5]` |
 | episodic_only (ref) | **6.140** | `[9, 8, 6, 6, 5, 4, 5]` |
 
-### LLM-distilled
+### LLM-distilled skill
 
 | Condition | reward | turns |
 |---|---|---|
 | skill_only_llm | 5.880 | `[9, 8, 6, 9, 9, 10, 5]` |
 | facts_plus_skill_llm | 6.040 | `[9, 8, 6, 6, 6, 7, 6]` |
 
-On this single seed, LLM-distilled skill **alone** is weaker than the proxy template and far below dense facts (`episodic_only` 6.14). Facts + LLM skill also does not beat dense facts alone. Distilled texts live in `memory.distilled_skill_history`.
+### Atomic flat LLM (Mem0-style extract, read-all)
+
+| Condition | reward | turns |
+|---|---|---|
+| atomic_flat_llm | 6.000 | `[9, 8, 11, 6, 7, 4, 5]` |
+| episodic_only (ref) | **6.140** | `[9, 8, 6, 6, 5, 4, 5]` |
+| outcome_only (ref) | 6.020 | `[9, 8, 6, 7, 7, 7, 5]` |
+| no_memory (ref) | 5.700 | `[9, 10, 10, 8, 10, 8, 10]` |
+
+On this single seed, flat LLM notes beat `no_memory` but are **slightly worse** than dense context–action–outcome (`episodic_only`) and roughly match / slightly under `outcome_only`. Qualitatively, notes lose episode binding (e.g. “the number was less than 669” without which episode), so past targets can blur across games. Full Mem0 top-k retrieval is still deferred.
+
+On this single seed, LLM-distilled skill **alone** is weaker than the proxy template and far below dense facts (`episodic_only` 6.14). Facts + LLM skill also does not beat dense facts alone. Distilled texts live in `memory.distilled_skill_history`; flat notes in `memory.flat_memories`.
