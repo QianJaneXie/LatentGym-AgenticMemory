@@ -1958,7 +1958,7 @@ Current implementation note (see `AGENTIC_MEMORY_PHASE1_NOTE.md`, `AGENTIC_MEMOR
 - Pilot 2 conditions landed: `atomic_flat_llm`, `skill_only` / `facts_plus_skill`, `skill_only_llm` / `facts_plus_skill_llm`;
 - reporting seed so far: GPT-5.6, `range_100`, `traj_000`, 7 episodes (single-seed pilot, not a multi-seed proof);
 - do not treat earlier 5-episode files as the reporting horizon;
-- self-contained explorer HTML under `latentgym/results/memory_phase1_gpt56_range100_standard/skill_only_llm/hermes_soft_toxicity_explorer.html`.
+- self-contained explorer HTML at `latentgym/results/memory_phase1_gpt56_range100_standard/memory_baselines_explorer.html`.
 
 Acceptance criteria: met for the single-seed pilot (agent-visible-only records; no evaluator leakage; Pilot 1+2 runnable end-to-end; provisional read that dense CAO ≥ flat LLM notes / outcome-only ≫ no memory, and skill-only LLM is the weakest experience arm).
 

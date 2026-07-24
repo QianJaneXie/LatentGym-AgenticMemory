@@ -32,8 +32,8 @@ episode ends (conversation still holds rules + this episode's play)
 
 `facts_plus_skill*` uses the **same dense facts as `episodic_only`**.
 
-Explorer (updated for inline distill; includes historical blind quotes for contrast):  
-`latentgym/results/memory_phase1_gpt56_range100_standard/skill_only_llm/hermes_soft_toxicity_explorer.html`
+Explorer (episodic / Mem0-style / inline Hermes-pattern; includes historical blind quotes):  
+`latentgym/results/memory_phase1_gpt56_range100_standard/memory_baselines_explorer.html`
 
 ---
 
