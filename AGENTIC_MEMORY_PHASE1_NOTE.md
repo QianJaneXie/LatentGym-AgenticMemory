@@ -2,13 +2,13 @@
 
 **Status:** Pilot 1 complete on `range_100` (single trajectory, 7 episodes, GPT)  
 **Depends on:** Phase 0 (`AGENTIC_MEMORY_PHASE0_NOTE.md`)  
-**Scope:** single-layer factual memory baselines (no cognition / no drill-down / no Mem0)
+**Scope:** single-layer factual memory baselines (no cognition / no drill-down / no reconciliation layer)
 
 ---
 
 ## Relation to `AGENTIC_MEMORY_PLAN.md`
 
-Pilot 1 minimum set (§8.2 / §14.1):
+Pilot 1 minimum set (plan §15 / Pilot 1 list):
 
 | Plan baseline | Runner condition | Status |
 |---|---|---|
@@ -100,8 +100,7 @@ Dir: `latentgym/results/memory_phase1_gpt56_setof2_info/` — plumbing only; too
 
 ---
 
-## Next → Pilot 2
+## Next
 
-Pilot 2 is underway in `AGENTIC_MEMORY_PHASE2_NOTE.md`.
-
-Pilot 2 now includes both **proxy template** skills and **LLM-distilled** skills (`skill_only_llm` / `facts_plus_skill_llm`). See `AGENTIC_MEMORY_PHASE2_NOTE.md`. Atomic flat facts remain deferred. Mem0 / top-k remain deferred.
+- **Pilot 2** (representation + Hermes-pattern skill / Mem0-style flat extract): done — see `AGENTIC_MEMORY_PHASE2_NOTE.md`.
+- **Pilot 3 / plan Phase 2** (fact reconciliation, `FactClaim` / relations / current view): not started. Faithful Mem0 top-k remains deferred until scale hurts.

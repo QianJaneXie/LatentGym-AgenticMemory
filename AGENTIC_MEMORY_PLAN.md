@@ -4,9 +4,21 @@
 
 **Status:** working design specification  
 **Initial environment:** `number_guessing`  
-**Primary objective:** first determine whether explicit factual memory improves cross-task performance, before introducing cognitive memory or RL  
+**Primary objective:** first determine whether explicit factual memory improves cross-task performance, then test whether the system can continuously reconcile, correct, and maintain those facts before introducing cognitive memory or RL  
 **Second objective:** add evidence-grounded cognitive memory with regression testing and decision-time applicability checks  
 **Longer-term objective:** use the same environment and evaluation framework for RL-managed memory and, later, latent or differentiable memory architectures
+
+**Implementation progress (LatentGym notes):**
+
+| Plan unit | Note file | Status |
+|---|---|---|
+| Phase 0 | `AGENTIC_MEMORY_PHASE0_NOTE.md` | Done |
+| Pilot 1 / eng. Phase 1 (factual utility) | `AGENTIC_MEMORY_PHASE1_NOTE.md` | Done on `range_100` / `traj_000` (7 ep, GPT-5.6) |
+| Pilot 2 (flat extract + Hermes-pattern skills) | `AGENTIC_MEMORY_PHASE2_NOTE.md` | Done on same seed (not eng. Phase 2) |
+| Pilot 3 / eng. **Phase 2** (fact reconciliation) | — | **Next** |
+| Eng. Phase 3+ (retrieval scale, cognition, RL) | — | Not started |
+
+Do not confuse **Pilot 2** (representation / skill baselines) with engineering **Phase 2** (reconciliation).
 
 ---
 
@@ -77,6 +89,8 @@ The staged memory lifecycle is:
 ```text
 interaction trajectory
     -> detailed factual record
+    -> atomic claims with time, scope, and provenance
+    -> fact reconciliation and current factual view
     -> compact factual memory linked to the detailed record
     -> decision-time retrieval
     -> optional drill-down when the summary is ambiguous or contradictory
@@ -88,6 +102,26 @@ interaction trajectory
 The central safety principle is:
 
 > Memory may be useless, but it should not be toxic.
+
+A second principle governs routine maintenance:
+
+> Maintenance compute should primarily clarify and reconcile facts, not prematurely construct durable beliefs.
+
+In this document, **fact** and **knowledge** are not treated as mutually exclusive
+philosophical categories. A verified statement such as “Episode 3 target was
+250” may reasonably be called both factual knowledge and a fact. The operational
+distinction is instead between:
+
+- **source-grounded factual state** — what was observed, when, under what scope,
+  and from which evidence;
+- **derived belief or strategy** — an interpretation, generalization, causal
+  explanation, prediction, or recommendation inferred from those facts.
+
+The project therefore treats a Wiki-style structured representation as safe
+only when it has an explicit mechanism to detect duplicates, preserve temporal
+and scope qualifiers, represent conflicts, issue corrections, and rebuild the
+current factual view from provenance. Continuous refresh alone is insufficient
+if it merely rewrites summaries without reconciling the underlying claims.
 
 The core distinction is:
 
@@ -159,8 +193,9 @@ However, **large-scale retrieval is not the first research problem**. The curren
 1. Decide what deserves to be stored as a fact.
 2. Decide what belongs in the core factual record versus supporting detail.
 3. Test whether a small factual memory set improves behavior when all facts are shown.
-4. Add provenance-based drill-down when summaries are ambiguous.
-5. Only after scale becomes an observed problem, study ranking, top-k retrieval, and budgets.
+4. Add fact reconciliation: identity, duplicate, conflict, correction, temporal scope, and current-status maintenance.
+5. Add provenance-based drill-down when summaries are ambiguous or reconciliation is uncertain.
+6. Only after scale becomes an observed problem, study ranking, top-k retrieval, and budgets.
 ```
 
 Therefore:
@@ -258,9 +293,37 @@ After the single-layer factual baseline is understood, compare:
 
 Measure whether the additional hierarchy improves robustness and interpretability enough to justify its complexity.
 
+#### RQ5: Can the system maintain a coherent factual state as evidence accumulates?
+
+This question goes beyond extracting or displaying facts. Test whether the
+memory system can distinguish:
+
+- duplicate reports of the same event from repeated occurrences of similar events;
+- apparent conflicts caused by different times, scopes, or entities from genuine contradictions;
+- corrections from ordinary new observations;
+- superseded state claims from immutable historical event claims;
+- directly observed facts from deterministic aggregates and uncertain inferences.
+
+The target output is not one irreversible summary. It is an append-only evidence
+archive plus a maintained **current factual view** whose claims have explicit
+status, temporal scope, provenance, and relations to other claims.
+
+#### RQ6: Does fact reconciliation reduce memory-induced harm?
+
+Compare:
+
+- append-only extracted facts with no reconciliation;
+- facts with duplicate linking only;
+- facts with duplicate, conflict, correction, and supersession relations;
+- reconciled facts with provenance-based drill-down for unresolved cases.
+
+Measure whether reconciliation improves task performance, factual consistency,
+auditability, and recovery after deliberately injected noisy or conflicting
+records.
+
 ### Stage B: cognitive memory
 
-#### RQ5: Does cognitive memory add value beyond its supporting facts?
+#### RQ7: Does cognitive memory add value beyond its supporting facts?
 
 Under identical factual evidence, compare:
 
@@ -270,7 +333,7 @@ Under identical factual evidence, compare:
 
 This comparison directly tests the concern that skill-like systems may rely on distilled experience while discarding the evidence required to question it.
 
-#### RQ6: Does regression validation reduce toxic cognitive memory?
+#### RQ8: Does regression validation reduce toxic cognitive memory?
 
 Compare:
 
@@ -279,7 +342,7 @@ Compare:
 - regression-validated cognition;
 - regression-validated cognition plus invocation-time fact checking.
 
-#### RQ7: Which failures dominate?
+#### RQ9: Which failures dominate?
 
 Separate at least:
 
@@ -296,7 +359,7 @@ Separate at least:
 
 ### Stage C: learned memory policy
 
-#### RQ8: Which decisions should eventually be learned by RL?
+#### RQ10: Which decisions should eventually be learned by RL?
 
 Do not assume the answer in advance. Use the agentic system to determine whether the main bottleneck is:
 
@@ -687,7 +750,66 @@ class FactualMemory:
     status: str  # active, corrected, obsolete, archived
 ```
 
-### 6.3 `CognitiveMemory`
+### 6.3 `FactClaim` and reconciliation relations
+
+The existing `FactualMemory` object is sufficient for the first read-all
+baseline, but Phase 2 should separate an event record from the claims maintained
+about it.
+
+```python
+@dataclass
+class FactClaim:
+    claim_id: str
+    subject_key: str
+    predicate: str
+    object_value: Any
+    valid_time_start: str | None
+    valid_time_end: str | None
+    observed_at: str
+    scope: dict[str, Any]
+    source_detailed_fact_ids: list[str]
+    derivation_type: str  # observed, deterministic_aggregate, inferred
+    verification_status: str  # verified, disputed, unresolved, retracted
+    current_status: str  # active, superseded, corrected, historical
+    confidence: float | None
+```
+
+```python
+@dataclass
+class FactRelation:
+    relation_id: str
+    source_claim_id: str
+    target_claim_id: str
+    relation_type: str  # duplicate_of, same_value_new_event, contradicts,
+                        # corrects, supersedes, refines, supports
+    rationale: str
+    evidence_ids: list[str]
+    created_at: str
+```
+
+The system must not collapse two claims merely because their surface text or
+values match. For example, “Episode 1 target was 137” and “Episode 3 target was
+137” are two historical events with the same value, not duplicate records.
+
+### 6.4 `CurrentFactView`
+
+```python
+@dataclass
+class CurrentFactView:
+    view_id: str
+    entity_or_scope_key: str
+    active_claim_ids: list[str]
+    disputed_claim_ids: list[str]
+    historical_claim_ids: list[str]
+    unresolved_relation_ids: list[str]
+    built_from_store_version: str
+    built_at: str
+```
+
+The current view is rebuildable from the append-only claims, relations, and
+source evidence. It is never the only surviving representation.
+
+### 6.5 `CognitiveMemory`
 
 ```python
 @dataclass
@@ -705,7 +827,7 @@ class CognitiveMemory:
     revision_parent_id: str | None
 ```
 
-### 6.4 `DecisionTrace`
+### 6.6 `DecisionTrace`
 
 A decision trace must preserve both the task decision and the memory decision that preceded it. It must record the full candidate set available at that moment, not only the memories eventually selected.
 
@@ -761,7 +883,7 @@ class DecisionTrace:
 
 The field `cited_or_claimed_used_memory_ids` is weak evidence because an LLM may misreport what influenced it. Preserve it, but also compare behavior across paired branches to measure whether memory actually changed the action.
 
-### 6.5 `MemoryActionTrace`
+### 6.7 `MemoryActionTrace`
 
 Use a separate normalized record when training a router independently from the task agent.
 
@@ -784,7 +906,7 @@ class MemoryActionTrace:
 
 Logging unselected candidates is mandatory. Without the choice set, later training can imitate successful selections but cannot learn why one fact should be preferred over another.
 
-### 6.6 `CounterfactualBranchRun`
+### 6.8 `CounterfactualBranchRun`
 
 This generic schema supports factual retrieval, drill-down, and cognition experiments.
 
@@ -813,7 +935,7 @@ class CounterfactualBranchRun:
 
 Branches in the same `counterfactual_group_id` must share the same prefix, latent, suffix tasks, task-agent configuration, and sampling setup as closely as the environment permits. Only the memory action should differ.
 
-### 6.7 `RegressionRun`
+### 6.9 `RegressionRun`
 
 Cognitive regression tests may retain a cognition-specific view over the generic branch records.
 
@@ -837,7 +959,7 @@ class RegressionRun:
     failure_tags: list[str]
 ```
 
-### 6.8 Reference and visibility validation
+### 6.10 Reference and visibility validation
 
 Add checks enforcing:
 
@@ -948,7 +1070,94 @@ The runner resolves the fact ID and returns only the linked agent-visible record
 
 ---
 
-## 8. Stage A: Factual-Memory Experiments
+## 8. Fact Reconciliation and Ongoing Maintenance
+
+Fact extraction answers “what candidate facts can be written?” Fact
+reconciliation answers “how should multiple claims coexist after new evidence
+arrives?” This is the main addition required to move from merely recording facts
+to **clarifying facts**.
+
+### 8.1 Reconciliation operations
+
+At each episode boundary or maintenance pass:
+
+1. parse new evidence into source-grounded claims;
+2. identify the entity, event, time, and scope of each claim;
+3. compare each new claim with potentially related existing claims;
+4. classify the relation as:
+   - same event / duplicate report;
+   - same value but different event;
+   - compatible under different times or scopes;
+   - refinement;
+   - correction;
+   - supersession;
+   - genuine unresolved contradiction;
+5. preserve all source records and add relation metadata;
+6. rebuild the current factual view;
+7. surface unresolved cases for drill-down rather than inventing a resolution.
+
+### 8.2 Three factual categories
+
+Every maintained claim should be labeled as one of:
+
+1. **Observed event fact**
+   - directly supported by an agent-visible event;
+   - example: “Episode 3 revealed target 137.”
+
+2. **Deterministic derived fact**
+   - mechanically computed from observed events;
+   - example: “137 has appeared twice in Episodes 1–3.”
+   - the derivation function and source claim IDs must be recorded.
+
+3. **Hypothesis or belief**
+   - not guaranteed by the observations;
+   - example: “The next target will probably be 137.”
+   - this must not enter the factual layer.
+
+### 8.3 Controlled reconciliation cases
+
+The initial test suite should include:
+
+- duplicated transcript or repeated extraction of the same event;
+- identical values arising in different episodes;
+- two incompatible target values attributed to the same episode;
+- state changes that make an older claim historical rather than false;
+- claims that become compatible after adding time or scope qualifiers;
+- noisy LLM extraction that omits a qualifier;
+- a later correction from a higher-reliability source;
+- unresolved conflicts where neither source is authoritative.
+
+### 8.4 Deterministic first implementation
+
+For Number Guessing, reconciliation should initially be deterministic:
+
+- episode identity is defined by `trajectory_id + episode_idx`;
+- target claims for different episodes are separate events even when values match;
+- incompatible target claims for the same episode are contradictions;
+- an environment-verified revealed target outranks an unverified extracted guess;
+- no conflicting record is deleted;
+- the active view selects the verified claim and marks the other claim disputed or corrected;
+- all decisions and status changes retain source IDs.
+
+An LLM-based reconciliation agent may be added only after this deterministic
+benchmark establishes expected behavior.
+
+### 8.5 Reconciliation metrics
+
+Report:
+
+- duplicate-detection precision and recall;
+- same-value-different-event false merge rate;
+- contradiction-detection precision and recall;
+- correction and supersession accuracy;
+- temporal/scope qualification accuracy;
+- unresolved-conflict rate;
+- current-view factual accuracy;
+- provenance completeness;
+- task harm caused by unreconciled or incorrectly reconciled claims;
+- construction and maintenance calls, tokens, latency, and rebuild cost.
+
+## 9. Stage A: Factual-Memory Experiments
 
 The first experiments should stop here. They do not require cognitive memory.
 
@@ -981,16 +1190,31 @@ Run the conditions incrementally rather than implementing the full hierarchy at 
 6. **Selective fact writing**
    - compare all verified events with a policy that prioritizes explicit statements, failures, surprises, and high-impact outcomes.
 
+#### Fact-maintenance ablations
+
+7. **Append-only facts without reconciliation**
+   - preserve every extracted fact independently;
+   - provides the control for testing whether maintenance itself matters.
+
+8. **Reconciled factual memory**
+   - link duplicate reports;
+   - distinguish repeated events from duplicate records;
+   - mark contradiction, correction, refinement, and supersession relations;
+   - present the maintained current factual view while preserving the archive.
+
+9. **Reconciled facts plus unresolved-case drill-down**
+   - open source evidence whenever deterministic reconciliation cannot safely resolve a conflict.
+
 #### Later hierarchy experiments
 
-7. **Detailed factual memory only**
+10. **Detailed factual memory only**
    - provide raw linked records without compact summaries.
 
-8. **Compact core facts plus detailed evidence**
+11. **Compact core facts plus detailed evidence**
    - provide all compact facts;
    - allow linked detailed records to be opened when needed.
 
-9. **Budgeted retrieval**
+12. **Budgeted retrieval**
    - add top-k, ranking, or context budgets only after the read-all factual baseline shows that memory content is useful and store size causes measurable interference or cost.
 
 ### 8.2 Baseline families and recommended comparison matrix
@@ -1060,13 +1284,13 @@ The Hermes labels refer to the system pattern of persistent memory plus skills a
 **How Hermes-style skills are produced (important):**
 
 - In the real Hermes Agent product, skills are primarily **agent-distilled**: after tasks, the agent writes or revises procedural `SKILL.md`-like artifacts (humans may also author or approve skills).
-- In LatentGym Pilot 2, prefer the same *information pattern* (skill without facts vs facts plus skill) under a transparent adaptation:
-  1. **Proxy skill (optional first step):** a deterministic, experimenter-written template filled only from agent-visible outcomes — useful for plumbing and a lower bound, but **not** Hermes distillation.
-  2. **Default / closer Hermes adaptation:** after each episode or prefix, prompt an LLM to write a short lesson / skill from the agent-visible transcript or outcomes, then inject that text alone (`skill_only_llm`) or with facts (`facts_plus_skill_llm`).
-- **Harm / brittleness baseline:** do **not** require handwritten “toxic cognition” injects. Prefer market-style LLM distillation/extraction; measure harm when distilled skills underperform facts-only or give anti-useful advice (organic soft toxicity). Handwritten toxic rules remain optional diagnostics only.
-- Do not report a deterministic template skill as “Hermes Agent” or as evidence about Hermes’s autonomous learning loop. Label results as `skill_only` / `facts_plus_skill` (template) or `*_llm` (distilled) under a LatentGym Hermes-pattern adaptation.
+- In LatentGym Pilot 2, use the same *information pattern* (skill without facts vs facts plus skill) under a transparent adaptation (landed; see `AGENTIC_MEMORY_PHASE2_NOTE.md`):
+  1. **Proxy skill:** deterministic experimenter template from agent-visible outcomes — plumbing / lower bound, **not** Hermes distillation (`skill_only`, `facts_plus_skill`).
+  2. **Closer Hermes-pattern adaptation:** after each episode, prompt an LLM to write a short lesson from agent-visible outcomes, then inject alone (`skill_only_llm`) or with dense facts (`facts_plus_skill_llm`). No `SKILL.md` / Hermes product integration.
+- **Harm / brittleness baseline:** do **not** require handwritten “toxic cognition” injects. Prefer market-style LLM distillation; on the pilot seed, `skill_only_llm` underperformed dense facts and sometimes advised against using shared-range structure. Handwritten toxic rules remain optional diagnostics only.
+- Do not report a template or LatentGym distilled skill as “Hermes Agent.” Label as Hermes-**pattern** adaptation.
 
-The early atomic-fact baseline is deliberately framework-independent. A **faithful Mem0 system baseline** is deferred until retrieval scale becomes relevant. That later baseline should preserve Mem0's own extraction and query-based top-k or hybrid retrieval behavior, rather than stripping away the features that distinguish the system.
+The atomic flat-fact baseline (`atomic_flat_llm`) is framework-independent and **landed in Pilot 2** (read-all LLM notes). A **faithful Mem0 system baseline** (query top-k / hybrid) remains deferred until retrieval scale becomes relevant.
 
 Mem0 should be treated primarily as an **interaction-memory baseline**:
 
@@ -1115,6 +1339,7 @@ Cognitive-memory variants remain a later Stage B comparison and should not block
 | Skill only vs. facts only | Is generalized experience more useful than retaining events? |
 | Skill only vs. facts plus skill | Do supporting facts reduce brittle or toxic skill use? |
 | Compact facts vs. compact facts plus drill-down | Does access to original evidence help under ambiguity or conflict? |
+| Append-only facts vs. reconciled facts | Does duplicate/conflict/correction maintenance improve factual accuracy and reduce harm? |
 | Proposed facts vs. oracle facts | Is the bottleneck extraction quality or memory utility? |
 
 #### Recommended experiment order
@@ -1129,7 +1354,7 @@ Do not run every baseline in the first sweep.
 - model for real-API pilots: a strong fixed task agent (currently GPT-5.6 via LLMCenter);
 - Stage A0 presentation: **read-all** prior-episode facts unless a later phase demonstrates interference.
 
-**Pilot 1: establish factual-memory utility**
+**Pilot 1: establish factual-memory utility** — **done** (see `AGENTIC_MEMORY_PHASE1_NOTE.md`)
 
 1. no memory;
 2. full history;
@@ -1137,21 +1362,26 @@ Do not run every baseline in the first sweep.
 4. context-action-outcome facts;
 5. oracle factual summary.
 
-**Pilot 2: compare factual representations and experience paradigms**
+**Pilot 2: compare factual representations and experience paradigms** — **done** on `traj_000` (see `AGENTIC_MEMORY_PHASE2_NOTE.md`)
 
-6. atomic flat facts, read-all;
-7. provenance-grounded event facts, read-all;
-8. naive reflection or Hermes-style skill only;
-9. facts plus the same skill.
+6. atomic flat facts, read-all (`atomic_flat_llm`);
+7. provenance-grounded / dense event facts, read-all (`episodic_only` from Pilot 1);
+8. Hermes-pattern skill only (template + `skill_only_llm`);
+9. facts plus the same skill (`facts_plus_skill` / `facts_plus_skill_llm`).
 
 A faithful Mem0 system comparison is not part of this pilot. Add it later only when memory volume makes query-based retrieval meaningful.
 
-**Pilot 3: test why provenance matters**
+**Pilot 3: test fact reconciliation and why provenance matters** — **next** (engineering Phase 2)
 
-10. compact facts without details;
-11. compact facts plus always-open details;
-12. compact facts plus selective drill-down;
-13. conflict, ambiguity, noise, and latent-drift cases.
+10. append-only facts without reconciliation;
+11. reconciled facts with deterministic duplicate/conflict/correction handling;
+12. reconciled facts plus unresolved-case drill-down;
+13. compact facts without details;
+14. compact facts plus always-open details;
+15. compact facts plus selective drill-down;
+16. conflict, ambiguity, noise, correction, and latent-drift cases.
+
+Number Guessing rarely produces natural claim conflicts under clean deterministic extraction; Pilot 3 should use **controlled cases** (§8.3) plus organic noise from LLM flat extraction. Same-value targets in different episodes must stay distinct events, not merges.
 
 Only after these pilots should the project add cognitive-memory formation and RL.
 
@@ -1183,6 +1413,11 @@ Only after these pilots should the project add cognitive-memory formation and RL
 - detailed-fact drill-down count, token cost, and latency;
 - irrelevant-memory load rate;
 - contradiction-resolution rate;
+- duplicate-linking accuracy;
+- same-value-different-event false merge rate;
+- correction and supersession accuracy;
+- current factual-view accuracy;
+- unresolved-conflict calibration;
 - severe memory harm rate.
 
 ### 8.4 Acceptance criteria before Stage B
@@ -1193,13 +1428,15 @@ Proceed to cognitive memory only after:
 - factual summaries can be traced to detailed records;
 - no-memory, full-history, and factual-memory conditions run on identical trajectory files;
 - at least one factual-memory condition produces interpretable behavior, even if it does not beat full history;
-- failures can be attributed to recording, summarization, retrieval, utilization, or drill-down.
+- failures can be attributed to recording, summarization, reconciliation, retrieval, utilization, or drill-down;
+- duplicate, conflict, correction, and supersession cases pass deterministic tests;
+- the current factual view can be rebuilt from append-only evidence and relations.
 
 A null result is still useful. If facts do not help, investigate why before adding cognition.
 
 ---
 
-## 9. Stage B: Hypothesis and Cognitive-Memory Generation
+## 10. Stage B: Hypothesis and Cognitive-Memory Generation
 
 The generator consumes selected factual memories, not raw evaluator state.
 
@@ -1246,7 +1483,7 @@ Return JSON only.
 
 ---
 
-## 10. Formation-Time Regression Validation
+## 11. Formation-Time Regression Validation
 
 Regression validation remains part of the design. It is not replaced by invocation-time reasoning.
 
@@ -1334,7 +1571,7 @@ Report confidence intervals and paired-difference distributions before hard-codi
 
 ---
 
-## 11. Invocation-Time Applicability Judgment
+## 12. Invocation-Time Applicability Judgment
 
 A cognition that passed regression tests is still not automatically applicable.
 
@@ -1367,7 +1604,7 @@ This directly tests whether fact retention makes experience safer and more adapt
 
 ---
 
-## 12. Retrieval Design
+## 13. Retrieval Design
 
 ### 12.1 Near-term principle: prove utility before optimizing retrieval
 
@@ -1450,7 +1687,7 @@ Do not add a learned retriever initially.
 
 ---
 
-## 13. Provenance and Self-Correction
+## 14. Provenance and Self-Correction
 
 Every decision should log:
 
@@ -1477,7 +1714,7 @@ The initial system never physically deletes a detailed factual record. A fact or
 
 ---
 
-## 14. Experimental Conditions by Stage
+## 15. Experimental Conditions by Stage
 
 ### 14.1 Stage A: factual memory and external-system baselines
 
@@ -1542,7 +1779,7 @@ Key ablations:
 
 ---
 
-## 15. Evaluation Protocol
+## 16. Evaluation Protocol
 
 ### Debug stage
 
@@ -1598,7 +1835,7 @@ Produce:
 
 ---
 
-## 16. Suggested Repository Layout
+## 17. Suggested Repository Layout
 
 The following is a **target layout**, not a requirement to create every component immediately. Phase 1 should add only the minimal factual record/store and memory-aware runner needed for the read-all baseline. Add detailed stores, retrievers, cognition, and regression components only in the phase that tests them.
 
@@ -1657,7 +1894,7 @@ Follow existing repository test conventions if they differ.
 
 ---
 
-## 17. Integration Points with Existing LatentGym
+## 18. Integration Points with Existing LatentGym
 
 Expected existing flow:
 
@@ -1687,7 +1924,7 @@ Before coding, Cursor must identify the exact episode-boundary signal and docume
 
 ---
 
-## 18. Step-by-Step Implementation Plan
+## 19. Step-by-Step Implementation Plan
 
 ### Phase 0: reproduce LatentGym
 
@@ -1699,52 +1936,54 @@ Acceptance criteria:
 - trajectory JSON or viewer works;
 - exact episode-boundary and message-retention paths are documented.
 
-### Phase 1: single-layer factual-memory baseline
+### Phase 1: single-layer factual-memory baseline — **done** (Pilot 1 + Pilot 2 extras)
 
-Tasks:
+Tasks (completed):
 
-- define one minimal `FactualRecord` representation containing context, action, observed outcome, and source references;
+- define one minimal factual record (LatentGym: `EpisodicFact`) with context, action, observed outcome, and source references;
 - implement deterministic Number Guessing recording;
 - implement append-only serialization;
 - show all accumulated factual records to the next episode (**read-all**; no premature top-k);
-- add decision logging that preserves the current decision context, every available factual-memory candidate, the facts shown to the agent, the task action, immediate and suffix outcomes, and reproducibility metadata;
-- assign stable `decision_id`, `counterfactual_group_id`, and branch fields even before RL so paired traces can be added without changing the data model;
-- compare alternative factual bodies such as outcome-only versus context-action-outcome;
-- run the minimum baseline set: no memory, full history, outcome-only facts, context-action-outcome facts, and oracle factual summary;
-- after the minimum set works, add an atomic flat-fact representation baseline, Hermes-style skill only, and facts plus the same skill;
-- defer a faithful Mem0 system baseline until Phase 3, when query-based top-k or hybrid retrieval can be tested meaningfully;
-- keep hidden-state and hidden-state-embedding baselines out of scope for this phase.
+- add decision logging with loaded fact IDs, action, outcome, and reproducibility metadata;
+- compare outcome-only versus dense context-action-outcome;
+- run Pilot 1 minimum set on **7-episode** `range_100` files;
+- run Pilot 2 extras: atomic flat LLM extract, Hermes-pattern skill only, facts plus skill (template + LLM-distilled);
+- defer a faithful Mem0 system baseline until eng. Phase 3 / retrieval scale;
+- keep hidden-state baselines out of scope.
 
-Current implementation note (as of the LatentGym Phase 1 runners):
+Current implementation note (see `AGENTIC_MEMORY_PHASE1_NOTE.md`, `AGENTIC_MEMORY_PHASE2_NOTE.md`):
 
-- landed conditions are `no_memory`, `full_history`, and `episodic_only`;
-- `episodic_only` currently injects a **dense** read-all store (per-turn greater/less/correct facts plus episode outcomes), which is closer to a dense context-action-outcome body than to a pure outcome-only body;
-- **outcome-only** and **oracle factual summary** are still required to finish Pilot 1 on `range_100` with 7 episodes;
-- do not treat earlier 5-episode pilots as the reporting horizon.
+- Pilot 1 conditions landed: `no_memory`, `full_history`, `outcome_only`, `episodic_only`, `oracle_summary`;
+- `episodic_only` injects a **dense** read-all store (per-turn greater/less/correct facts plus episode outcomes);
+- Pilot 2 conditions landed: `atomic_flat_llm`, `skill_only` / `facts_plus_skill`, `skill_only_llm` / `facts_plus_skill_llm`;
+- reporting seed so far: GPT-5.6, `range_100`, `traj_000`, 7 episodes (single-seed pilot, not a multi-seed proof);
+- do not treat earlier 5-episode files as the reporting horizon;
+- self-contained explorer HTML under `latentgym/results/memory_phase1_gpt56_range100_standard/skill_only_llm/hermes_soft_toxicity_explorer.html`.
 
-Acceptance criteria:
+Acceptance criteria: met for the single-seed pilot (agent-visible-only records; no evaluator leakage; Pilot 1+2 runnable end-to-end; provisional read that dense CAO ≥ flat LLM notes / outcome-only ≫ no memory, and skill-only LLM is the weakest experience arm).
 
-- records contain only agent-visible evidence;
-- no inferred advice enters the factual layer;
-- hidden evaluator fields never enter memory;
-- no-memory, full-history, and read-all factual-memory conditions run end to end on **7-episode** trajectory files;
-- the team can state which factual fields appear useful or harmful (at least outcome-only vs denser context-action-outcome records on `range_100`).
-
-### Phase 2: split core facts from detailed evidence
+### Phase 2: fact reconciliation and split core facts from detailed evidence — **next** (Pilot 3)
 
 Tasks:
 
-- introduce `DetailedFact` and compact `FactualMemory` only after Phase 1 informs the split;
+- introduce deterministic claim identity and reconciliation before any LLM-based maintenance;
+- add `FactClaim`, `FactRelation`, and rebuildable `CurrentFactView`;
+- test duplicate reports, repeated values in different episodes, genuine contradictions, corrections, refinements, and supersession (§8.3 controlled cases; NG will not spontaneously generate most conflicts);
+- introduce `DetailedFact` and compact `FactualMemory` only if Pilot 1–2 evidence justifies the split (dense single-layer CAO may remain sufficient on this toy);
 - migrate or adapt Phase 1 records without losing source references;
 - add provenance validation;
-- implement `OPEN_DETAILED_FACT` or equivalent;
-- compare single-layer facts with compact facts plus supporting detail;
-- add conflict and drift cases.
+- implement `OPEN_DETAILED_FACT` or equivalent when hierarchy is introduced;
+- compare append-only vs reconciled current view on conflict/noise/drift suites;
+- reuse identical trajectory files across conditions.
 
 Acceptance criteria:
 
-- every compact fact resolves to agent-visible detailed evidence;
-- the hierarchy provides a clear benefit in ambiguity resolution, auditability, or context cost;
+- the system distinguishes duplicate records from repeated events with the same value;
+- genuine conflicts are detected and either resolved from source reliability or left explicitly unresolved;
+- corrections and supersessions preserve old evidence while updating the current factual view;
+- the current factual view can be rebuilt deterministically from the append-only store;
+- every compact fact (if introduced) resolves to agent-visible detailed evidence;
+- hierarchy is justified by ambiguity resolution, auditability, or context cost — not added by default;
 - identical trajectory files are reused across conditions.
 
 ### Phase 3: retrieval scaling, only if needed
@@ -1768,7 +2007,7 @@ Acceptance criteria:
 
 Tasks:
 
-- treat LLM-distilled Hermes-pattern skills as the default harmful / brittle arm (already started in Pilot 2);
+- treat LLM-distilled Hermes-pattern skills as the default harmful / brittle arm (Pilot 2 landed `skill_only_llm`; extend with paired prefixes / more seeds as needed);
 - implement common-prefix replay or forking when paired suffixes are needed;
 - run facts-only versus facts-plus-distilled-skill (and later facts-plus-cognition) suffixes;
 - compute paired metrics; report harm when skill-only underperforms facts-only;
@@ -1811,7 +2050,7 @@ Tasks:
 
 ---
 
-## 19. Testing Requirements
+## 20. Testing Requirements
 
 ### Unit tests
 
@@ -1845,11 +2084,14 @@ Tasks:
 - replay mismatch: abort the pair;
 - API failure in one branch: rerun or discard the entire pair;
 - duplicate facts: preserve all source references but deduplicate presentation;
+- repeated values in different events: never merge solely on surface equality;
+- genuine contradictions: attach relation metadata and either resolve by explicit evidence priority or mark unresolved;
+- corrections and supersessions: preserve prior claims as historical and rebuild the active view;
 - ambiguous fact: keep the detailed record and mark the summary for drill-down rather than inventing certainty.
 
 ---
 
-## 20. Later RL Extension
+## 21. Later RL Extension
 
 Only begin RL after the staged agentic experiments reveal a specific bottleneck.
 
@@ -2217,7 +2459,7 @@ REVISE_SCOPE h3 current_session_only
 
 Prefer freezing the task agent or training a small router/adapter so improvements are attributable to memory policy. If the same LLM performs task and memory actions, separately log log-probabilities and rewards for the memory-action tokens wherever the training infrastructure permits.
 
-## 21. Later Differentiable-Memory Extension
+## 22. Later Differentiable-Memory Extension
 
 Keep the environment, evaluation protocol, provenance, and staged factual/cognitive distinction independent of memory representation.
 
@@ -2248,7 +2490,7 @@ The first implementation returns text, but runner code should not assume memory 
 
 ---
 
-## 22. Commands to Run First
+## 23. Commands to Run First
 
 After cloning and following the repository's current setup guide, use repository-provided commands.
 
@@ -2288,7 +2530,7 @@ Confirm exact latent, prompt, and feedback IDs from the cloned repository before
 
 ---
 
-## 23. First Cursor Tasks
+## 24. First Cursor Tasks
 
 ### Task 1: inspect without editing
 
@@ -2339,7 +2581,7 @@ Do not choose a learned retrieval mechanism.
 
 ---
 
-## 24. Success Criteria
+## 25. Success Criteria
 
 ### Stage A factual-memory MVP
 
@@ -2350,7 +2592,9 @@ The first MVP succeeds if:
 3. factual memory can be compared with no memory and full history;
 4. alternative factual schemas reveal what information is useful, redundant, or harmful;
 5. failures can be assigned to fact selection, representation, or utilization;
-6. the result informs whether a separate detailed-evidence layer is needed.
+6. the result informs whether a separate detailed-evidence layer is needed;
+7. duplicate, conflict, correction, and supersession cases are handled explicitly;
+8. a current factual view is reproducibly derived from the append-only evidence archive.
 
 A later Stage A extension succeeds if compact core facts remain traceable to detailed records and selective drill-down resolves ambiguity.
 
@@ -2372,20 +2616,25 @@ The project does not need to prove that Number Guessing transfers directly to co
 
 ---
 
-## 25. Open Design Questions
+## 26. Open Design Questions
 
 ### Factual memory
 
-- Which baseline pattern is most informative after the minimum pilot: atomic flat facts, Hermes-style skills, or facts plus skills?
+- Which baseline pattern is most informative after the minimum pilot: atomic flat facts, Hermes-style skills, or facts plus skills? *(Pilot 2 single-seed hint: dense CAO > flat notes; skill-only LLM weakest; facts+skill does not beat facts alone.)*
 - Does provenance improve task behavior, or primarily improve auditability and failure diagnosis?
 - Which observed events deserve promotion into the default factual-memory presentation?
-- Does a small read-all factual memory improve over no memory?
-- Can it match full history without first optimizing retrieval?
-- Which factual granularity is useful: episode outcome, context-action-outcome, failures/surprises, or a hybrid?
+- Does a small read-all factual memory improve over no memory? *(Pilot 1: yes vs `no_memory` on `traj_000`.)*
+- Can it match full history without first optimizing retrieval? *(Pilot 1: dense CAO ≈ full history on that seed.)*
+- Which factual granularity is useful: episode outcome, context-action-outcome, failures/surprises, or a hybrid? *(Pilot 1: dense CAO slightly above outcome-only.)*
 - When does a compact summary become too ambiguous?
 - Can the task agent reliably decide when to open a detailed record?
 - Is first-decision retrieval sufficient, or are later decision points necessary?
 - How should conflicting factual summaries be presented?
+- What is the correct identity key for deciding whether two records describe the same event?
+- Which conflicts can be resolved deterministically, and which should remain unresolved?
+- How should time, scope, source reliability, and correction status be represented?
+- Does reconciliation improve downstream decisions beyond improving auditability?
+- How much maintenance compute should be allocated to rebuilding the current factual view?
 - Does hierarchical factual memory help under latent drift?
 
 ### Cognitive memory

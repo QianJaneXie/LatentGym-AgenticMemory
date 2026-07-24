@@ -1,21 +1,24 @@
-# Agentic Memory — Phase / Pilot 2 Note
+# Agentic Memory — Pilot 2 Note
 
-**Status:** proxy + LLM skill done; Mem0-style flat extraction added  
+**Status:** complete on `traj_000` (proxy skill, LLM skill, Mem0-style flat extract)  
 **Depends on:** Pilot 1 complete (`AGENTIC_MEMORY_PHASE1_NOTE.md`)  
 **Focus latent:** `range_100`, 7 episodes, GPT-5.6, one trajectory (`traj_000`)
 
+> **Naming:** This note is **Pilot 2** (plan: “compare factual representations and experience paradigms”).  
+> The main plan’s engineering **Phase 2** is now **fact reconciliation** (Pilot 3). Do not confuse the two.
+
 ---
 
-## Hermes-style skill: two adaptations
+## Hermes-pattern skill: two adaptations
 
 | Condition | Who writes the skill | Meaning |
 |---|---|---|
 | `skill_only` / `facts_plus_skill` | Experimenter **template** | Proxy pattern only |
-| `skill_only_llm` / `facts_plus_skill_llm` | **Same task LLM** distills a lesson after each episode from agent-visible outcomes | Closer Hermes adaptation |
+| `skill_only_llm` / `facts_plus_skill_llm` | **Same task LLM** distills a lesson after each episode from agent-visible outcomes | Closer Hermes-pattern adaptation |
 
-Neither is a full Hermes Agent integration.
+Neither is a full Hermes Agent integration (no `SKILL.md` / `skill_manage`).
 
-**Harm baseline decision:** do not require handwritten toxic cognition. Default “soft toxicity” comes from market-style **LLM-distilled skills** (e.g. `skill_only_llm` underperforming `episodic_only`, or advice that discards useful session structure). Handwritten toxic rules stay optional diagnostics only; see `AGENTIC_MEMORY_PLAN.md` Phase 4 / §8.2.
+**Harm baseline decision:** do not require handwritten toxic cognition. Default “soft toxicity” comes from market-style **LLM-distilled skills** (e.g. `skill_only_llm` underperforming `episodic_only`). Handwritten toxic rules stay optional; see plan Phase 4 / Hermes-pattern section.
 
 LLM distillation flow:
 
@@ -29,28 +32,20 @@ episode ends
 
 `facts_plus_skill*` uses the **same dense facts as `episodic_only`**.
 
+Explorer (self-contained HTML):  
+`latentgym/results/memory_phase1_gpt56_range100_standard/skill_only_llm/hermes_soft_toxicity_explorer.html`
+
 ---
 
 ## Mem0-style atomic flat extraction (`atomic_flat_llm`)
 
-This is the baseline we may want to **beat** with dense context–action–outcome facts:
+Baseline we may want to **beat** with dense context–action–outcome facts:
 
 | Axis | This condition | Full Mem0 |
 |---|---|---|
 | Extraction | LLM writes short flat bullets from visible transcript | Same idea |
 | Presentation | **read-all** accumulated notes | Usually query → top-k |
 | Ranking / embeddings | None | Deferred until store size hurts |
-
-Flow:
-
-```text
-episode ends
-  -> separate generate(): extract 1-6 short flat facts from visible turns + end feedback
-  -> append (light dedupe) to flat_memories
-  -> next episode: inject all flat memories (no dense CAO block)
-```
-
-Extracted notes are stored in `memory.flat_memories` / `flat_memory_history` (not as `EpisodicFact` IDs).
 
 ---
 
@@ -72,7 +67,7 @@ python experiments/memory/run_baselines.py \
 
 ## Results (`range_100`, `traj_000`)
 
-### Proxy template (earlier)
+### Proxy template
 
 | Condition | reward | turns |
 |---|---|---|
@@ -96,6 +91,17 @@ python experiments/memory/run_baselines.py \
 | outcome_only (ref) | 6.020 | `[9, 8, 6, 7, 7, 7, 5]` |
 | no_memory (ref) | 5.700 | `[9, 10, 10, 8, 10, 8, 10]` |
 
-On this single seed, flat LLM notes beat `no_memory` but are **slightly worse** than dense context–action–outcome (`episodic_only`) and roughly match / slightly under `outcome_only`. Qualitatively, notes lose episode binding (e.g. “the number was less than 669” without which episode), so past targets can blur across games. Full Mem0 top-k retrieval is still deferred.
+On this single seed: dense CAO > flat LLM notes ≈ outcome-only ≫ no memory; skill-only LLM is the weakest experience arm. Distilled texts: `memory.distilled_skill_history`. Flat notes: `memory.flat_memories`.
 
-On this single seed, LLM-distilled skill **alone** is weaker than the proxy template and far below dense facts (`episodic_only` 6.14). Facts + LLM skill also does not beat dense facts alone. Distilled texts live in `memory.distilled_skill_history` (inspect there for organic soft-toxicity examples); flat notes in `memory.flat_memories`.
+---
+
+## Next → Pilot 3 / plan Phase 2 (reconciliation)
+
+Plan now puts **fact reconciliation** before cognition/RL:
+
+- `FactClaim`, `FactRelation`, rebuildable `CurrentFactView`
+- deterministic identity / duplicate / conflict / correction / supersession
+- controlled conflict & drift cases; optional unresolved-case drill-down
+
+See plan §8 (reconciliation), Pilot 3 list, and engineering Phase 2.  
+**Not started** in code yet. Phase 0 note needs no content change for this.
